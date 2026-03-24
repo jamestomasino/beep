@@ -75,6 +75,14 @@ See [docs/CONFIG.md](docs/CONFIG.md).
 ./scripts/beep-tray.sh
 ```
 
+For native modern tray integration (AppIndicator), install one of:
+
+```bash
+sudo apt install -y libayatana-appindicator3-dev
+# or
+sudo apt install -y libappindicator3-dev
+```
+
 Quick actions:
 
 - `./scripts/beep-tray.sh --open-ui`

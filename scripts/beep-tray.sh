@@ -54,6 +54,47 @@ maybe_build_native_tray() {
   return 0
 }
 
+maybe_build_appindicator_tray() {
+  local out="$ROOT_DIR/build/beep-tray-appindicator"
+  local src="$ROOT_DIR/tray/appindicator_tray.c"
+  if [[ -x "$out" ]]; then
+    return 0
+  fi
+  if ! command -v gcc >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! command -v pkg-config >/dev/null 2>&1; then
+    return 1
+  fi
+  mkdir -p "$ROOT_DIR/build"
+  if pkg-config --exists ayatana-appindicator3-0.1 gtk+-3.0; then
+    gcc -O2 "$src" -o "$out" -DUSE_AYATANA $(pkg-config --cflags --libs ayatana-appindicator3-0.1 gtk+-3.0) >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  if pkg-config --exists appindicator3-0.1 gtk+-3.0; then
+    gcc -O2 "$src" -o "$out" -DUSE_APPINDICATOR $(pkg-config --cflags --libs appindicator3-0.1 gtk+-3.0) >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  return 1
+}
+
+run_appindicator_tray() {
+  local helper="${BEEP_TRAY_APPINDICATOR:-}"
+  if [[ -z "$helper" ]]; then
+    if [[ -x "$ROOT_DIR/build/beep-tray-appindicator" ]]; then
+      helper="$ROOT_DIR/build/beep-tray-appindicator"
+    elif command -v beep-tray-appindicator >/dev/null 2>&1; then
+      helper="$(command -v beep-tray-appindicator)"
+    fi
+  fi
+  if [[ -z "$helper" ]]; then
+    maybe_build_appindicator_tray || return 1
+    helper="$ROOT_DIR/build/beep-tray-appindicator"
+  fi
+  [[ -x "$helper" ]] || return 1
+  "$helper" "$BEEP_BIN" "$URL"
+}
+
 run_native_tray() {
   local helper="${BEEP_TRAY_NATIVE:-}"
   if [[ -z "$helper" ]]; then
@@ -86,6 +127,10 @@ case "${1:-}" in
 esac
 
 ensure_daemon
+
+if run_appindicator_tray; then
+  exit 0
+fi
 
 if command -v yad >/dev/null 2>&1; then
   MENU="Open Controls!xdg-open $URL"
@@ -121,7 +166,7 @@ if run_native_tray; then
   exit 0
 fi
 
-echo "No tray backend found (yad/gtk helper)." >&2
+echo "No tray backend found (appindicator/yad/gtk helper)." >&2
 echo "beep is running in background." >&2
 echo "Open controls: $URL" >&2
 echo "Stop daemon: $BEEP_BIN --ctl=quit" >&2

@@ -58,6 +58,16 @@ fi
 if [[ -x "$ROOT/build/beep-tray-gtk" ]]; then
   cp "$ROOT/build/beep-tray-gtk" "$APPDIR/usr/bin/beep-tray-gtk"
 fi
+if command -v gcc >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1 && pkg-config --exists ayatana-appindicator3-0.1 gtk+-3.0; then
+  mkdir -p "$ROOT/build"
+  gcc -O2 "$ROOT/tray/appindicator_tray.c" -o "$ROOT/build/beep-tray-appindicator" -DUSE_AYATANA $(pkg-config --cflags --libs ayatana-appindicator3-0.1 gtk+-3.0)
+elif command -v gcc >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1 && pkg-config --exists appindicator3-0.1 gtk+-3.0; then
+  mkdir -p "$ROOT/build"
+  gcc -O2 "$ROOT/tray/appindicator_tray.c" -o "$ROOT/build/beep-tray-appindicator" -DUSE_APPINDICATOR $(pkg-config --cflags --libs appindicator3-0.1 gtk+-3.0)
+fi
+if [[ -x "$ROOT/build/beep-tray-appindicator" ]]; then
+  cp "$ROOT/build/beep-tray-appindicator" "$APPDIR/usr/bin/beep-tray-appindicator"
+fi
 
 cat > "$APPDIR/usr/share/applications/io.github.jamestomasino.beep.desktop" <<'DESK'
 [Desktop Entry]

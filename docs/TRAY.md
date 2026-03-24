@@ -1,7 +1,8 @@
 # Tray + Control UI (Linux)
 
-Control options are available in three modes:
+Control options are available in four modes:
 
+- native AppIndicator tray helper (`beep-tray-appindicator`, preferred when available)
 - tray menu via `yad` (when installed)
 - native GTK tray helper fallback (`beep-tray-gtk`, auto-built when GTK dev libs are available)
 - built-in web UI fallback (always available)
@@ -15,7 +16,8 @@ Control options are available in three modes:
 This script:
 
 - starts `beep` daemon if not already running
-- uses tray menu if `yad` is available
+- uses AppIndicator helper first (if available)
+- otherwise uses tray menu if `yad` is available
 - otherwise uses native GTK tray helper when available
 - otherwise opens the built-in web UI at `http://127.0.0.1:48778/`
 - sends live control commands to daemon via `--ctl`
