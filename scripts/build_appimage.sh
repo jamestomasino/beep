@@ -14,6 +14,14 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/i
 cp "$ROOT/beep" "$APPDIR/usr/bin/beep"
 cp "$ROOT/scripts/beep-tray.sh" "$APPDIR/usr/bin/beep-tray"
 
+if command -v gcc >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1 && pkg-config --exists gtk+-3.0; then
+  mkdir -p "$ROOT/build"
+  gcc -O2 "$ROOT/tray/gtk_tray.c" -o "$ROOT/build/beep-tray-gtk" $(pkg-config --cflags --libs gtk+-3.0)
+fi
+if [[ -x "$ROOT/build/beep-tray-gtk" ]]; then
+  cp "$ROOT/build/beep-tray-gtk" "$APPDIR/usr/bin/beep-tray-gtk"
+fi
+
 cat > "$APPDIR/usr/share/applications/beep.desktop" <<'DESK'
 [Desktop Entry]
 Type=Application
@@ -23,6 +31,15 @@ Exec=beep-tray
 Icon=beep
 Terminal=false
 Categories=Audio;Utility;
+Actions=OpenControl;StopDaemon;
+
+[Desktop Action OpenControl]
+Name=Open Beep Controls
+Exec=beep-tray --open-ui
+
+[Desktop Action StopDaemon]
+Name=Stop Beep
+Exec=beep-tray --stop
 DESK
 
 cat > "$APPDIR/usr/share/icons/hicolor/256x256/apps/beep.png.base64" <<'B64'

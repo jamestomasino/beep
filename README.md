@@ -75,6 +75,11 @@ See [docs/CONFIG.md](docs/CONFIG.md).
 ./scripts/beep-tray.sh
 ```
 
+Quick actions:
+
+- `./scripts/beep-tray.sh --open-ui`
+- `./scripts/beep-tray.sh --stop`
+
 See [docs/TRAY.md](docs/TRAY.md).
 
 ## AppImage
