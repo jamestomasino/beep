@@ -13,6 +13,8 @@ It runs in the background and maps real machine/input activity to procedural sci
 - Event engine with varied motif palettes (not fixed one-source/one-sound mapping)
 - Realtime synthesis via `miniaudio`
 - Optional sample-layer blending from `assets/samples/*.wav`
+- Local control API (`--ctl`) for live runtime changes
+- Tray launcher script (`scripts/beep-tray.sh`)
 
 ## Run
 
@@ -33,6 +35,9 @@ Useful flags:
 - `--debug-cpu`
 - `--debug-fake-input` (testing only)
 - `--audio-null`
+- `--ipc-addr=<host:port>`
+- `--no-ipc`
+- `--ctl=<cmd>` (`get_state`, `quit`, `save_config`, `toggle:<key>`, `set:<key>=<value>`)
 
 X11 input build dependencies:
 
@@ -54,6 +59,22 @@ Default config path:
 `~/.config/beep/config.conf`
 
 See [docs/CONFIG.md](docs/CONFIG.md).
+
+## Tray UI
+
+```bash
+./scripts/beep-tray.sh
+```
+
+See [docs/TRAY.md](docs/TRAY.md).
+
+## AppImage
+
+```bash
+./scripts/build_appimage.sh
+```
+
+See [docs/PACKAGING.md](docs/PACKAGING.md).
 
 ## Notes
 

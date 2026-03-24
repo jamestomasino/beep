@@ -26,6 +26,16 @@ fn parse_f32(v string) ?f32 {
 	return f32(n)
 }
 
+fn clamp01(x f32) f32 {
+	if x < 0.0 {
+		return 0.0
+	}
+	if x > 1.0 {
+		return 1.0
+	}
+	return x
+}
+
 pub fn default_config_path() string {
 	home := os.home_dir()
 	if home == '' {
@@ -88,6 +98,21 @@ pub fn load_file(path string, base AppConfig) !AppConfig {
 			}
 			'audio_backend' {
 				cfg.audio_backend = val
+			}
+			'master_volume' {
+				if x := parse_f32(val) {
+					cfg.master_volume = clamp01(x)
+				}
+			}
+			'ambient_level' {
+				if x := parse_f32(val) {
+					cfg.ambient_level = clamp01(x)
+				}
+			}
+			'burst_density' {
+				if x := parse_f32(val) {
+					cfg.burst_density = clamp01(x)
+				}
 			}
 			'keyboard_threshold' {
 				if x := parse_f32(val) {

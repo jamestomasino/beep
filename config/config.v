@@ -14,6 +14,9 @@ pub mut:
 	debug_fake_input bool
 	audio_backend    string = 'miniaudio'
 	profile          string = 'normal'
+	master_volume    f32    = 1.0
+	ambient_level    f32    = 1.0
+	burst_density    f32    = 1.0
 	synth            audio.SynthConfig
 }
 

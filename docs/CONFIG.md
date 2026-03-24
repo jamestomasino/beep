@@ -17,6 +17,9 @@ enable_network=true
 log_events=false
 debug_cpu=false
 audio_backend=miniaudio
+master_volume=1.00
+ambient_level=1.00
+burst_density=1.00
 
 keyboard_threshold=0.25
 mouse_threshold=0.20
