@@ -9,6 +9,11 @@ beep
 
 # Ignore binary output folders
 bin/
+build/
+
+# AppImage/tooling scratch
+*.AppImage
+squashfs-root/
 
 # Ignore common editor/system specific metadata
 .DS_Store
