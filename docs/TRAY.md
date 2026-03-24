@@ -1,12 +1,9 @@
-# Tray UI (Linux)
+# Tray + Control UI (Linux)
 
-A practical tray UI is provided via `yad` and IPC controls.
+Control options are available in two modes:
 
-## Install
-
-```bash
-sudo apt install -y yad
-```
+- tray menu via `yad` (when installed)
+- built-in web UI fallback (no extra dependency)
 
 ## Run
 
@@ -17,7 +14,8 @@ sudo apt install -y yad
 This script:
 
 - starts `beep` daemon if not already running
-- creates a tray icon with a popup menu
+- uses tray menu if `yad` is available
+- otherwise opens the built-in web UI at `http://127.0.0.1:48778/`
 - sends live control commands to daemon via `--ctl`
 
 ## Controlled Options
@@ -33,3 +31,4 @@ This script:
 - quit daemon
 
 IPC address defaults to `127.0.0.1:48777`, override with `BEEP_IPC_ADDR`.
+Web UI address defaults to `127.0.0.1:48778`, override with `BEEP_UI_ADDR`.

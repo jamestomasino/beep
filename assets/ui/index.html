@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>beep control</title>
+  <style>
+    :root { --bg:#0b0f14; --panel:#151b23; --fg:#dbe4ee; --muted:#8da0b3; --acc:#4bc1ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; color:var(--fg); background:radial-gradient(1200px 700px at 20% -10%, #1d2a39 0%, var(--bg) 55%); }
+    .wrap { max-width: 780px; margin: 24px auto; padding: 0 14px; }
+    .panel { background: var(--panel); border: 1px solid #243142; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+    h1 { margin: 0 0 10px; font-size: 20px; color: #f2f7ff; }
+    h2 { margin: 0 0 10px; font-size: 15px; color: #bfd3e8; }
+    .row { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+    button { border:1px solid #2d4158; background:#1d2b3b; color:#e6f2ff; border-radius:8px; padding:8px 10px; cursor:pointer; }
+    button:hover { border-color:#3f6288; }
+    .sl { display:grid; grid-template-columns: 150px 1fr 60px; gap:10px; align-items:center; margin:8px 0; }
+    input[type=range] { width:100%; }
+    code { color: var(--acc); }
+    .muted { color: var(--muted); font-size: 13px; }
+    #state { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color:#b9ccde; background:#0f151d; border:1px solid #27384b; border-radius:8px; padding:10px; max-height: 230px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>beep control</h1>
+      <div class="muted">Local UI. API and daemon remain bound to <code>127.0.0.1</code>.</div>
+      <div class="row">
+        <button onclick="cmd('/api/toggle/enabled')">Toggle Enabled</button>
+        <button onclick="cmd('/api/profile/calm')">Calm</button>
+        <button onclick="cmd('/api/profile/normal')">Normal</button>
+        <button onclick="cmd('/api/profile/noisy')">Noisy</button>
+      </div>
+      <div class="row">
+        <button onclick="cmd('/api/toggle/enable_cpu')">CPU Source</button>
+        <button onclick="cmd('/api/toggle/enable_system')">System Source</button>
+        <button onclick="cmd('/api/toggle/enable_network')">Network Source</button>
+        <button onclick="cmd('/api/toggle/log_events')">Debug Events</button>
+      </div>
+      <div class="sl"><label>Master Volume</label><input id="master" type="range" min="0" max="1" step="0.01" oninput="setVal('master_volume',this.value,'masterv')"><span id="masterv">1.00</span></div>
+      <div class="sl"><label>Ambient Level</label><input id="ambient" type="range" min="0" max="1" step="0.01" oninput="setVal('ambient_level',this.value,'ambientv')"><span id="ambientv">1.00</span></div>
+      <div class="sl"><label>Burst Density</label><input id="burst" type="range" min="0" max="1" step="0.01" oninput="setVal('burst_density',this.value,'burstv')"><span id="burstv">1.00</span></div>
+      <div class="row">
+        <button onclick="cmd('/api/save')">Save Config</button>
+        <button onclick="cmd('/api/quit')">Quit Daemon</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Runtime State</h2>
+      <div id="state">loading...</div>
+    </div>
+  </div>
+  <script>
+    function show(v){document.getElementById('state').textContent=JSON.stringify(v,null,2)}
+    async function cmd(path){try{const r=await fetch(path);show(await r.json());sync()}catch(e){show({ok:false,error:String(e)})}}
+    async function sync(){
+      try{
+        const r=await fetch('/api/state')
+        const j=await r.json()
+        show(j)
+        const s=j.state||{}
+        setRange('master',s.master_volume==null?1:s.master_volume,'masterv')
+        setRange('ambient',s.ambient_level==null?1:s.ambient_level,'ambientv')
+        setRange('burst',s.burst_density==null?1:s.burst_density,'burstv')
+      }catch(e){show({ok:false,error:String(e)})}
+    }
+    function setRange(id,v,oid){const n=Number(v);const el=document.getElementById(id);el.value=n.toFixed(2);document.getElementById(oid).textContent=n.toFixed(2)}
+    function setVal(key,v,oid){const n=Number(v);document.getElementById(oid).textContent=n.toFixed(2);cmd('/api/set/'+key+'/'+n.toFixed(2))}
+    sync(); setInterval(sync, 1500)
+  </script>
+</body>
+</html>

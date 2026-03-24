@@ -18,8 +18,8 @@ cat > "$APPDIR/usr/share/applications/beep.desktop" <<'DESK'
 [Desktop Entry]
 Type=Application
 Name=beep
-Comment=Retro activity sonifier daemon
-Exec=beep
+Comment=Retro activity sonifier with local controls
+Exec=beep-tray
 Icon=beep
 Terminal=false
 Categories=Audio;Utility;

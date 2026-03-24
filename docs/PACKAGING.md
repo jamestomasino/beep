@@ -19,9 +19,10 @@ Output:
 The AppImage currently includes:
 
 - `beep` daemon binary
-- `beep-tray` tray launcher script
+- `beep-tray` control launcher script (tray if `yad`, web UI otherwise)
 
 Runtime notes:
 
-- tray script requires `yad` on target system
+- if `yad` is missing, control falls back to built-in web UI
 - X11 global input paths still require X11-related runtime support
+- on Wayland sessions, app continues with cpu/system/network samplers

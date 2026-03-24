@@ -78,6 +78,12 @@ fn start_control_server(addr string, config_path string, shared rt RuntimeContro
 	}
 }
 
+fn start_web_ui(addr string, ipc_addr string) {
+	run_web_ui_server(addr, ipc_addr) or {
+		eprintln('[warn] web ui disabled: ${err}')
+	}
+}
+
 fn filter_activity(sample core.ActivitySample, shared rt RuntimeControl) bool {
 	rlock rt {
 		if !rt.enabled {
@@ -106,6 +112,8 @@ fn print_usage() {
 	println('  --config=<path> use config file (default: ~/.config/beep/config.conf)')
 	println('  --profile=<calm|normal|noisy> apply profile')
 	println('  --x11-input    use x11 global input source (requires `-d x11_input`)')
+	println('                 on x11 sessions, this is auto-enabled unless --no-x11-input is set')
+	println('  --no-x11-input disable x11 global input source')
 	println('  --x11-mode=<poll|xi2> x11 backend mode (default: poll)')
 	println('  --debug-fake-input enable fake keyboard/mouse activity generator (testing only)')
 	println('  --no-cpu       disable cpu sampler')
@@ -116,6 +124,8 @@ fn print_usage() {
 	println('  --audio-null   disable audio output')
 	println('  --ipc-addr=<host:port> control server address (default 127.0.0.1:48777)')
 	println('  --no-ipc       disable control server')
+	println('  --ui-addr=<host:port> web ui server address (default 127.0.0.1:48778)')
+	println('  --no-web-ui    disable built-in web ui')
 	println('  --ctl=<cmd>    send control cmd and exit')
 	println('      cmds: get_state | quit | save_config | toggle:<key> | set:<key>=<value>')
 }
@@ -152,6 +162,7 @@ pub fn run() ! {
 	}
 
 	ipc_addr := value_flag(args, '--ipc-addr=') or { default_ipc_addr() }
+	ui_addr := value_flag(args, '--ui-addr=') or { default_ui_addr() }
 	if ctl := value_flag(args, '--ctl=') {
 		req := parse_ctl_cmd(ctl) or {
 			return error('invalid --ctl command')
@@ -215,9 +226,12 @@ pub fn run() ! {
 	if !has_flag(args, '--no-ipc') {
 		spawn start_control_server(ipc_addr, config_path, shared rt)
 	}
+	if !has_flag(args, '--no-web-ui') {
+		spawn start_web_ui(ui_addr, ipc_addr)
+	}
 
 	session := plinux.detect_session()
-	println('session=${session} profile=${cfg.profile} config=${config_path} ipc=${ipc_addr}')
+	println('session=${session} profile=${cfg.profile} config=${config_path} ipc=${ipc_addr} ui=${ui_addr}')
 	if session == .wayland {
 		eprintln('[warn] wayland session detected. Global input hooks require compositor-specific support.')
 	}
@@ -229,13 +243,16 @@ pub fn run() ! {
 	spawn run_engine_dynamic(cfg, engine_input_ch, sound_ch, shared rt)
 	spawn run_activity_filter(raw_activity_ch, engine_input_ch, shared rt)
 
-	if has_flag(args, '--x11-input') {
+	x11_mode := value_flag(args, '--x11-mode=') or { 'poll' }
+	enable_x11_auto := session == .x11 && !has_flag(args, '--no-x11-input')
+	enable_x11_cli := has_flag(args, '--x11-input')
+	enable_x11 := enable_x11_cli || enable_x11_auto
+	if enable_x11 {
 		if session == .x11 {
-			x11_mode := value_flag(args, '--x11-mode=') or { 'poll' }
 			plinux.run_x11_input_with_mode(raw_activity_ch, x11_mode) or {
 				eprintln('[warn] x11 input unavailable: ${err}')
 			}
-		} else {
+		} else if enable_x11_cli {
 			eprintln('[warn] --x11-input ignored (session is ${session})')
 		}
 	}

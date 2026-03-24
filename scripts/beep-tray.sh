@@ -6,17 +6,24 @@ if [[ ! -x "$BEEP_BIN" ]]; then
   BEEP_BIN="${BEEP_BIN:-beep}"
 fi
 IPC_ADDR="${BEEP_IPC_ADDR:-127.0.0.1:48777}"
+UI_ADDR="${BEEP_UI_ADDR:-127.0.0.1:48778}"
 export BEEP_IPC_ADDR="$IPC_ADDR"
-
-if ! command -v yad >/dev/null 2>&1; then
-  echo "yad is required for tray UI (sudo apt install yad)" >&2
-  exit 1
-fi
+export BEEP_UI_ADDR="$UI_ADDR"
 
 # Ensure daemon exists.
 if ! "$BEEP_BIN" --ctl=get_state >/dev/null 2>&1; then
   "$BEEP_BIN" >/tmp/beep-daemon.log 2>&1 &
   sleep 1
+fi
+
+if ! command -v yad >/dev/null 2>&1; then
+  URL="http://$UI_ADDR/"
+  echo "yad not found; using built-in web UI at $URL" >&2
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$URL" >/dev/null 2>&1 || true
+  fi
+  echo "Open: $URL"
+  exit 0
 fi
 
 MENU="Toggle Enabled!$BEEP_BIN --ctl=toggle:enabled"

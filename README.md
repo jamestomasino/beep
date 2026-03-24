@@ -30,6 +30,7 @@ Useful flags:
 - `--no-system`
 - `--no-net`
 - `--x11-input` (requires build flag `-d x11_input`)
+- `--no-x11-input`
 - `--x11-mode=<poll|xi2>` (`xi2` requires build flag `-d x11_xi2`)
 - `--debug-events`
 - `--debug-cpu`
@@ -37,7 +38,15 @@ Useful flags:
 - `--audio-null`
 - `--ipc-addr=<host:port>`
 - `--no-ipc`
+- `--ui-addr=<host:port>`
+- `--no-web-ui`
 - `--ctl=<cmd>` (`get_state`, `quit`, `save_config`, `toggle:<key>`, `set:<key>=<value>`)
+
+Defaults:
+
+- On X11 sessions, global X11 input is auto-enabled when built with `-d x11_input`.
+- On Wayland sessions, `beep` leans on cpu/system/network samplers by default.
+- Built-in control UI is served on `http://127.0.0.1:48778/`.
 
 X11 input build dependencies:
 
