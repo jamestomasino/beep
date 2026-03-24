@@ -22,3 +22,8 @@ bin/
 # vweb and database
 *.db
 *.js
+
+# Local corpus/downloader workspace (never commit)
+refs/
+*99sounds*
+*interspace*
