@@ -43,7 +43,9 @@ ensure_tool() {
 LINUXDEPLOY_BIN="$(ensure_tool linuxdeploy 'https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage')"
 APPIMAGETOOL_BIN="$(ensure_tool appimagetool 'https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage')"
 
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$OUTDIR"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/metainfo" "$OUTDIR"
+# Clean stale metainfo files from previous incremental AppDir runs.
+rm -f "$APPDIR"/usr/share/metainfo/*.appdata.xml "$APPDIR"/usr/share/metainfo/*.metainfo.xml 2>/dev/null || true
 
 ( cd "$ROOT" && v . )
 cp "$ROOT/beep" "$APPDIR/usr/bin/beep"
@@ -51,13 +53,13 @@ cp "$ROOT/scripts/beep-tray.sh" "$APPDIR/usr/bin/beep-tray"
 
 if command -v gcc >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1 && pkg-config --exists gtk+-3.0; then
   mkdir -p "$ROOT/build"
-  gcc -O2 "$ROOT/tray/gtk_tray.c" -o "$ROOT/build/beep-tray-gtk" $(pkg-config --cflags --libs gtk+-3.0)
+  gcc -O2 -Wno-deprecated-declarations "$ROOT/tray/gtk_tray.c" -o "$ROOT/build/beep-tray-gtk" $(pkg-config --cflags --libs gtk+-3.0)
 fi
 if [[ -x "$ROOT/build/beep-tray-gtk" ]]; then
   cp "$ROOT/build/beep-tray-gtk" "$APPDIR/usr/bin/beep-tray-gtk"
 fi
 
-cat > "$APPDIR/usr/share/applications/beep.desktop" <<'DESK'
+cat > "$APPDIR/usr/share/applications/io.github.jamestomasino.beep.desktop" <<'DESK'
 [Desktop Entry]
 Type=Application
 Name=beep
@@ -65,7 +67,7 @@ Comment=Retro activity sonifier with local controls
 Exec=beep-tray
 Icon=beep
 Terminal=false
-Categories=Audio;Utility;
+Categories=AudioVideo;Audio;
 Actions=OpenControl;StopDaemon;
 
 [Desktop Action OpenControl]
@@ -76,6 +78,30 @@ Exec=beep-tray --open-ui
 Name=Stop Beep
 Exec=beep-tray --stop
 DESK
+
+cat > "$APPDIR/usr/share/metainfo/io.github.jamestomasino.beep.metainfo.xml" <<'META'
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.jamestomasino.beep</id>
+  <name>beep</name>
+  <summary>Retro activity sonifier with live controls</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <url type="homepage">https://github.com/jamestomasino/beep</url>
+  <developer id="io.github.jamestomasino">
+    <name>James Tomasino</name>
+  </developer>
+  <description>
+    <p>beep turns system activity into retro-futuristic procedural sounds and provides live controls for intensity and behavior.</p>
+  </description>
+  <launchable type="desktop-id">io.github.jamestomasino.beep.desktop</launchable>
+  <content_rating type="oars-1.1" />
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+  </categories>
+</component>
+META
 
 if command -v convert >/dev/null 2>&1; then
   convert -size 256x256 xc:'#10161f' \
@@ -100,7 +126,7 @@ else
 SVG
 fi
 
-"$LINUXDEPLOY_BIN" --appimage-extract-and-run --appdir "$APPDIR" -d "$APPDIR/usr/share/applications/beep.desktop" -i "$APPDIR/usr/share/icons/hicolor/256x256/apps/beep.png"
+"$LINUXDEPLOY_BIN" --appimage-extract-and-run --appdir "$APPDIR" -d "$APPDIR/usr/share/applications/io.github.jamestomasino.beep.desktop" -i "$APPDIR/usr/share/icons/hicolor/256x256/apps/beep.png"
 "$APPIMAGETOOL_BIN" --appimage-extract-and-run "$APPDIR" "$OUTDIR/beep-x86_64.AppImage"
 
 echo "Built: $OUTDIR/beep-x86_64.AppImage"
