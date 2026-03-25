@@ -35,6 +35,11 @@ procedure Beep_Config_Tests is
       Ada.Text_IO.Put_Line (F, "enable_cpu=false");
       Ada.Text_IO.Put_Line (F, "master_volume=0.25");
       Ada.Text_IO.Put_Line (F, "min_gap_ms=123");
+      Ada.Text_IO.Put_Line (F, "log_stats=true");
+      Ada.Text_IO.Put_Line (F, "stats_interval_ms=1500");
+      Ada.Text_IO.Put_Line (F, "signal_keyboard_weight=1.35");
+      Ada.Text_IO.Put_Line (F, "signal_mouse_min_gap_ms=9");
+      Ada.Text_IO.Put_Line (F, "signal_loadavg_weight=0.66");
       Ada.Text_IO.Close (F);
 
       Cfg := Beep.Config.Load_File (Temp_Path, Cfg);
@@ -42,6 +47,11 @@ procedure Beep_Config_Tests is
       Expect (Cfg.Enable_Cpu = False, "enable_cpu parse failed");
       Expect (abs (Cfg.Master_Volume - 0.25) < 0.0001, "master_volume parse failed");
       Expect (Cfg.Engine.Min_Gap_Ms = 123, "min_gap_ms parse failed");
+      Expect (Cfg.Log_Stats = True, "log_stats parse failed");
+      Expect (Cfg.Stats_Interval_Ms = 1500, "stats_interval_ms parse failed");
+      Expect (abs (Cfg.Signal.Keyboard_Weight - 1.35) < 0.0001, "signal_keyboard_weight parse failed");
+      Expect (Cfg.Signal.Mouse_Min_Gap_Ms = 9, "signal_mouse_min_gap_ms parse failed");
+      Expect (abs (Cfg.Signal.Loadavg_Weight - 0.66) < 0.0001, "signal_loadavg_weight parse failed");
 
       if Ada.Directories.Exists (Temp_Path) then
          Ada.Directories.Delete_File (Temp_Path);

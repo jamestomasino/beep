@@ -18,6 +18,9 @@ alr build
 ./obj/beep_main --debug-events --audio-bell
 ```
 
+By default the CLI now emits periodic `[stats ...]` lines with per-kind events/sec.
+Disable with config key `log_stats=false`.
+
 ## Tests
 
 ```bash
@@ -33,3 +36,4 @@ alr build
   - Linux `/proc` samplers (cpu/system/net)
   - X11 activity sampler (keyboard/mouse movement)
   - Native audio output via ALSA, with terminal bell fallback
+  - Signal tuning knobs via config (`signal_*` weights/min-gaps/source factors)

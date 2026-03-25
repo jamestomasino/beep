@@ -271,6 +271,12 @@ package body Beep.Config is
             Cfg.Log_Events := B;
          end if;
 
+      elsif K = "log_stats" then
+         B := Parse_Bool (V, Ok_Bool);
+         if Ok_Bool then
+            Cfg.Log_Stats := B;
+         end if;
+
       elsif K = "debug_cpu" then
          B := Parse_Bool (V, Ok_Bool);
          if Ok_Bool then
@@ -297,6 +303,72 @@ package body Beep.Config is
          if Ok_Num then
             Cfg.Burst_Density := Clamp01 (F);
          end if;
+
+      elsif K = "stats_interval_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 100 then
+            Cfg.Stats_Interval_Ms := Integer (I);
+         end if;
+
+      elsif K = "signal_keyboard_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Keyboard_Weight := F; end if;
+      elsif K = "signal_mouse_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Mouse_Weight := F; end if;
+      elsif K = "signal_cpu_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Cpu_Weight := F; end if;
+      elsif K = "signal_process_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Process_Weight := F; end if;
+      elsif K = "signal_memory_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Memory_Weight := F; end if;
+      elsif K = "signal_system_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.System_Weight := F; end if;
+      elsif K = "signal_network_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Network_Weight := F; end if;
+
+      elsif K = "signal_keyboard_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then Cfg.Signal.Keyboard_Min_Gap_Ms := Integer (I); end if;
+      elsif K = "signal_mouse_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then Cfg.Signal.Mouse_Min_Gap_Ms := Integer (I); end if;
+      elsif K = "signal_cpu_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then Cfg.Signal.Cpu_Min_Gap_Ms := Integer (I); end if;
+      elsif K = "signal_process_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then Cfg.Signal.Process_Min_Gap_Ms := Integer (I); end if;
+      elsif K = "signal_memory_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then Cfg.Signal.Memory_Min_Gap_Ms := Integer (I); end if;
+      elsif K = "signal_system_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then Cfg.Signal.System_Min_Gap_Ms := Integer (I); end if;
+      elsif K = "signal_network_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then Cfg.Signal.Network_Min_Gap_Ms := Integer (I); end if;
+
+      elsif K = "signal_mouse_click_boost" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Mouse_Click_Boost := F; end if;
+      elsif K = "signal_x11_keyboard_boost" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.X11_Keyboard_Boost := F; end if;
+      elsif K = "signal_psi_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Psi_Weight := F; end if;
+      elsif K = "signal_loadavg_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Loadavg_Weight := F; end if;
+      elsif K = "signal_disk_weight" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Signal.Disk_Weight := F; end if;
 
       elsif K = "keyboard_threshold" then F := Parse_F32 (V, Ok_Num); if Ok_Num then Cfg.Engine.Keyboard_Threshold := F; end if;
       elsif K = "mouse_threshold" then F := Parse_F32 (V, Ok_Num); if Ok_Num then Cfg.Engine.Mouse_Threshold := F; end if;

@@ -55,40 +55,75 @@ procedure Beep_Main is
       return Ada.Strings.Fixed.Index (To_String (Sample.Source), Pattern) > 0;
    end Source_Contains;
 
-   function Kind_Weight (Sample : Activity_Sample) return Float is
+   function Kind_Weight (Cfg : Beep.Config.App_Config; Sample : Activity_Sample) return Float is
    begin
       case Sample.Kind is
          when Keyboard =>
-            return 1.15;
+            return Cfg.Signal.Keyboard_Weight;
          when Mouse =>
-            return 1.10;
+            return Cfg.Signal.Mouse_Weight;
          when Cpu =>
-            return 0.92;
+            return Cfg.Signal.Cpu_Weight;
          when Process =>
-            return 1.00;
+            return Cfg.Signal.Process_Weight;
          when Memory =>
-            return 0.96;
+            return Cfg.Signal.Memory_Weight;
          when Beep.Core.Types.System =>
-            return 0.90;
+            return Cfg.Signal.System_Weight;
          when Network =>
-            return 0.95;
+            return Cfg.Signal.Network_Weight;
       end case;
    end Kind_Weight;
 
-   function Kind_Min_Gap (Kind : Activity_Kind) return Milliseconds is
+   function Kind_Min_Gap (Cfg : Beep.Config.App_Config; Kind : Activity_Kind) return Milliseconds is
    begin
       case Kind is
-         when Keyboard => return 18;
-         when Mouse => return 14;
-         when Cpu => return 60;
-         when Process => return 28;
-         when Memory => return 38;
-         when Beep.Core.Types.System => return 34;
-         when Network => return 26;
+         when Keyboard => return Milliseconds (Cfg.Signal.Keyboard_Min_Gap_Ms);
+         when Mouse => return Milliseconds (Cfg.Signal.Mouse_Min_Gap_Ms);
+         when Cpu => return Milliseconds (Cfg.Signal.Cpu_Min_Gap_Ms);
+         when Process => return Milliseconds (Cfg.Signal.Process_Min_Gap_Ms);
+         when Memory => return Milliseconds (Cfg.Signal.Memory_Min_Gap_Ms);
+         when Beep.Core.Types.System => return Milliseconds (Cfg.Signal.System_Min_Gap_Ms);
+         when Network => return Milliseconds (Cfg.Signal.Network_Min_Gap_Ms);
       end case;
    end Kind_Min_Gap;
 
    type Kind_Timestamps is array (Activity_Kind) of Milliseconds;
+   type Kind_Counts is array (Activity_Kind) of Natural;
+
+   function Rate_Image (Count : Natural; Elapsed_Ms : Milliseconds) return String is
+      Seconds : constant Float := Float (Elapsed_Ms) / 1000.0;
+      Rate    : Float := 0.0;
+   begin
+      if Seconds > 0.0 then
+         Rate := Float (Count) / Seconds;
+      end if;
+      return Ada.Strings.Fixed.Trim (Float'Image (Rate), Ada.Strings.Both);
+   end Rate_Image;
+
+   procedure Emit_Stats
+     (Counts      : Kind_Counts;
+      Window_Ms   : Milliseconds;
+      Window_End  : Milliseconds)
+   is
+      use Ada.Text_IO;
+      Total : Natural := 0;
+   begin
+      for K in Activity_Kind loop
+         Total := Total + Counts (K);
+      end loop;
+
+      Put_Line
+        ("[stats " & Long_Long_Integer'Image (Window_End) & " +" & Long_Long_Integer'Image (Window_Ms) & "ms]"
+         & " keyboard=" & Rate_Image (Counts (Keyboard), Window_Ms)
+         & " mouse=" & Rate_Image (Counts (Mouse), Window_Ms)
+         & " cpu=" & Rate_Image (Counts (Cpu), Window_Ms)
+         & " process=" & Rate_Image (Counts (Process), Window_Ms)
+         & " memory=" & Rate_Image (Counts (Memory), Window_Ms)
+         & " system=" & Rate_Image (Counts (Beep.Core.Types.System), Window_Ms)
+         & " net=" & Rate_Image (Counts (Network), Window_Ms)
+         & " total=" & Rate_Image (Total, Window_Ms));
+   end Emit_Stats;
 
    procedure Print_Usage is
       use Ada.Text_IO;
@@ -114,27 +149,28 @@ procedure Beep_Main is
       Audio  : in out Beep.Audio.Audio_Engine;
       Cfg    : Beep.Config.App_Config;
       Last_By_Kind : in out Kind_Timestamps;
+      Event_Counts : in out Kind_Counts;
       Sample : Activity_Sample)
    is
       Weighted : Activity_Sample := Sample;
       Gap      : Milliseconds;
       Event    : Optional_Sound_Event;
    begin
-      Weighted.Intensity := Clamp01 (Weighted.Intensity * Kind_Weight (Weighted));
+      Weighted.Intensity := Clamp01 (Weighted.Intensity * Kind_Weight (Cfg, Weighted));
 
       if Source_Contains (Weighted, "linux.x11.mouse.click") then
-         Weighted.Intensity := Clamp01 (Weighted.Intensity * 1.22);
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * Cfg.Signal.Mouse_Click_Boost);
       elsif Source_Contains (Weighted, "linux.x11.keyboard") then
-         Weighted.Intensity := Clamp01 (Weighted.Intensity * 1.12);
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * Cfg.Signal.X11_Keyboard_Boost);
       elsif Source_Contains (Weighted, "linux.proc.psi") then
-         Weighted.Intensity := Clamp01 (Weighted.Intensity * 0.88);
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * Cfg.Signal.Psi_Weight);
       elsif Source_Contains (Weighted, "linux.proc.loadavg") then
-         Weighted.Intensity := Clamp01 (Weighted.Intensity * 0.78);
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * Cfg.Signal.Loadavg_Weight);
       elsif Source_Contains (Weighted, "linux.proc.disk") then
-         Weighted.Intensity := Clamp01 (Weighted.Intensity * 0.90);
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * Cfg.Signal.Disk_Weight);
       end if;
 
-      Gap := Kind_Min_Gap (Weighted.Kind);
+      Gap := Kind_Min_Gap (Cfg, Weighted.Kind);
       if Last_By_Kind (Weighted.Kind) > 0 and then Weighted.Timestamp - Last_By_Kind (Weighted.Kind) < Gap then
          return;
       end if;
@@ -142,6 +178,7 @@ procedure Beep_Main is
 
       Event := Beep.Core.Mapping.Map_Activity (State, Cfg.Engine, Weighted);
       if Event.Has_Value then
+         Event_Counts (Weighted.Kind) := Event_Counts (Weighted.Kind) + 1;
          Beep.Audio.Emit (Audio, Cfg, Event.Value);
          if Cfg.Log_Events then
             Ada.Text_IO.Put_Line
@@ -169,6 +206,8 @@ procedure Beep_Main is
 
    Mapper_State : Engine_State := New_State;
    Last_By_Kind : Kind_Timestamps := (others => 0);
+   Event_Counts : Kind_Counts := (others => 0);
+   Stats_Window_Start : Milliseconds := 0;
    Cpu_Sampler  : Beep.Linux.Samplers.Cpu_Sampler;
    Sys_Sampler  : Beep.Linux.Samplers.System_Sampler;
    Net_Sampler  : Beep.Linux.Samplers.Net_Sampler;
@@ -268,7 +307,7 @@ begin
                  Beep.Linux.Samplers.Poll_Cpu (Cpu_Sampler, Cfg.Engine, Cfg.Debug_Cpu, Ts);
             begin
                if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Value (Sample));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Value (Sample));
                end if;
             end;
          end if;
@@ -279,7 +318,7 @@ begin
                  Beep.Linux.Samplers.Poll_System (Sys_Sampler, Ts);
             begin
                for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Item (Batch, I));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Item (Batch, I));
                end loop;
             end;
          end if;
@@ -290,7 +329,7 @@ begin
                  Beep.Linux.Samplers.Poll_Net (Net_Sampler, Ts);
             begin
                if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Value (Sample));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Value (Sample));
                end if;
             end;
          end if;
@@ -301,9 +340,19 @@ begin
                  Beep.Linux.Samplers.Poll_X11 (X11_Sampler, Ts);
             begin
                for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Item (Batch, I));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Item (Batch, I));
                end loop;
             end;
+         end if;
+
+         if Cfg.Log_Stats then
+            if Stats_Window_Start = 0 then
+               Stats_Window_Start := Ts;
+            elsif Ts - Stats_Window_Start >= Milliseconds (Cfg.Stats_Interval_Ms) then
+               Emit_Stats (Event_Counts, Ts - Stats_Window_Start, Ts);
+               Event_Counts := (others => 0);
+               Stats_Window_Start := Ts;
+            end if;
          end if;
       end;
 
