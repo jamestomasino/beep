@@ -361,6 +361,26 @@ package body Beep.Core.Mapping is
             Reason := To_Unbounded_String ("network variety");
       end case;
 
+      if State.Has_Last_Motif and then Motif = State.Last_Motif then
+         if (Sample.Kind = Cpu or else Sample.Kind = Memory or else Sample.Kind = Beep.Core.Types.System)
+           and then (Motif = Drone or else Motif = Hum or else Motif = Pad)
+           and then Rand01 (State) < 0.65
+         then
+            if Sample.Kind = Cpu then
+               if Sample.Cpu_Bucket = Busy then
+                  Motif := Whirr;
+               else
+                  Motif := Warble;
+               end if;
+            elsif Sample.Kind = Memory then
+               Motif := Wobble;
+            else
+               Motif := Cluster;
+            end if;
+            Reason := To_Unbounded_String ("ambient anti-streak");
+         end if;
+      end if;
+
       Duration := Base_Duration_For_Motif (Motif);
       Drop_Chance := Clamp01 ((0.40 - Density * 0.25) / Density_Scale);
 

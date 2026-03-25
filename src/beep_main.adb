@@ -1,6 +1,9 @@
 with Ada.Command_Line;
+with Ada.Characters.Handling;
+with Ada.Environment_Variables;
 with Ada.Directories;
 with Ada.Exceptions;
+with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Beep.Audio;
@@ -36,6 +39,57 @@ procedure Beep_Main is
       return False;
    end Has_Flag;
 
+   function Clamp01 (Value : Float) return Float is
+   begin
+      if Value < 0.0 then
+         return 0.0;
+      elsif Value > 1.0 then
+         return 1.0;
+      else
+         return Value;
+      end if;
+   end Clamp01;
+
+   function Source_Contains (Sample : Activity_Sample; Pattern : String) return Boolean is
+   begin
+      return Ada.Strings.Fixed.Index (To_String (Sample.Source), Pattern) > 0;
+   end Source_Contains;
+
+   function Kind_Weight (Sample : Activity_Sample) return Float is
+   begin
+      case Sample.Kind is
+         when Keyboard =>
+            return 1.15;
+         when Mouse =>
+            return 1.10;
+         when Cpu =>
+            return 0.92;
+         when Process =>
+            return 1.00;
+         when Memory =>
+            return 0.96;
+         when Beep.Core.Types.System =>
+            return 0.90;
+         when Network =>
+            return 0.95;
+      end case;
+   end Kind_Weight;
+
+   function Kind_Min_Gap (Kind : Activity_Kind) return Milliseconds is
+   begin
+      case Kind is
+         when Keyboard => return 18;
+         when Mouse => return 14;
+         when Cpu => return 60;
+         when Process => return 28;
+         when Memory => return 38;
+         when Beep.Core.Types.System => return 34;
+         when Network => return 26;
+      end case;
+   end Kind_Min_Gap;
+
+   type Kind_Timestamps is array (Activity_Kind) of Milliseconds;
+
    procedure Print_Usage is
       use Ada.Text_IO;
    begin
@@ -59,10 +113,34 @@ procedure Beep_Main is
      (State  : in out Engine_State;
       Audio  : in out Beep.Audio.Audio_Engine;
       Cfg    : Beep.Config.App_Config;
+      Last_By_Kind : in out Kind_Timestamps;
       Sample : Activity_Sample)
    is
-      Event : Optional_Sound_Event := Beep.Core.Mapping.Map_Activity (State, Cfg.Engine, Sample);
+      Weighted : Activity_Sample := Sample;
+      Gap      : Milliseconds;
+      Event    : Optional_Sound_Event;
    begin
+      Weighted.Intensity := Clamp01 (Weighted.Intensity * Kind_Weight (Weighted));
+
+      if Source_Contains (Weighted, "linux.x11.mouse.click") then
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * 1.22);
+      elsif Source_Contains (Weighted, "linux.x11.keyboard") then
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * 1.12);
+      elsif Source_Contains (Weighted, "linux.proc.psi") then
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * 0.88);
+      elsif Source_Contains (Weighted, "linux.proc.loadavg") then
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * 0.78);
+      elsif Source_Contains (Weighted, "linux.proc.disk") then
+         Weighted.Intensity := Clamp01 (Weighted.Intensity * 0.90);
+      end if;
+
+      Gap := Kind_Min_Gap (Weighted.Kind);
+      if Last_By_Kind (Weighted.Kind) > 0 and then Weighted.Timestamp - Last_By_Kind (Weighted.Kind) < Gap then
+         return;
+      end if;
+      Last_By_Kind (Weighted.Kind) := Weighted.Timestamp;
+
+      Event := Beep.Core.Mapping.Map_Activity (State, Cfg.Engine, Weighted);
       if Event.Has_Value then
          Beep.Audio.Emit (Audio, Cfg, Event.Value);
          if Cfg.Log_Events then
@@ -90,6 +168,7 @@ procedure Beep_Main is
    Cli_Audio_Bell   : Boolean := False;
 
    Mapper_State : Engine_State := New_State;
+   Last_By_Kind : Kind_Timestamps := (others => 0);
    Cpu_Sampler  : Beep.Linux.Samplers.Cpu_Sampler;
    Sys_Sampler  : Beep.Linux.Samplers.System_Sampler;
    Net_Sampler  : Beep.Linux.Samplers.Net_Sampler;
@@ -167,6 +246,16 @@ begin
    if Cfg.Enable_X11 and then not Beep.Linux.Samplers.X11_Active (X11_Sampler) then
       Ada.Text_IO.Put_Line ("[warn] X11 sampler unavailable (no display or X11 access)");
    end if;
+   declare
+      Session_Type    : constant String := Ada.Characters.Handling.To_Lower (Ada.Environment_Variables.Value ("XDG_SESSION_TYPE", ""));
+      Wayland_Display : constant String := Ada.Environment_Variables.Value ("WAYLAND_DISPLAY", "");
+      Is_Wayland      : constant Boolean := Session_Type = "wayland" or else Wayland_Display /= "";
+   begin
+      if Is_Wayland and then (not Cfg.Enable_X11 or else not Beep.Linux.Samplers.X11_Active (X11_Sampler)) then
+         Ada.Text_IO.Put_Line
+           ("[warn] Wayland session detected without active interactive input stream; activity feel may be less responsive");
+      end if;
+   end;
 
    Ada.Text_IO.Put_Line ("beep sampler loop started. Ctrl+C to stop.");
    loop
@@ -179,7 +268,7 @@ begin
                  Beep.Linux.Samplers.Poll_Cpu (Cpu_Sampler, Cfg.Engine, Cfg.Debug_Cpu, Ts);
             begin
                if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Value (Sample));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Value (Sample));
                end if;
             end;
          end if;
@@ -190,7 +279,7 @@ begin
                  Beep.Linux.Samplers.Poll_System (Sys_Sampler, Ts);
             begin
                for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Item (Batch, I));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Item (Batch, I));
                end loop;
             end;
          end if;
@@ -201,7 +290,7 @@ begin
                  Beep.Linux.Samplers.Poll_Net (Net_Sampler, Ts);
             begin
                if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Value (Sample));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Value (Sample));
                end if;
             end;
          end if;
@@ -212,7 +301,7 @@ begin
                  Beep.Linux.Samplers.Poll_X11 (X11_Sampler, Ts);
             begin
                for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Item (Batch, I));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Beep.Linux.Samplers.Item (Batch, I));
                end loop;
             end;
          end if;
