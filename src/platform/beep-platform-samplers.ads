@@ -81,6 +81,7 @@ private
       Darwin_Active  : Boolean := False;
       Prev_Idle_Ns   : Long_Long_Integer := 0;
       Primed         : Boolean := False;
+      Last_Emit_Ms   : Milliseconds := 0;
    end record;
 
    type Optional_Activity_Sample is record

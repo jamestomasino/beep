@@ -302,7 +302,7 @@ package body Beep.Platform.Samplers is
    end Parse_Darwin_Net_Totals;
 
    function Darwin_Hid_Idle_Ns (Value : out Long_Long_Integer) return Boolean is
-      Dump : constant String := Shell_Output ("ioreg -c IOHIDSystem -r -d 1");
+      Dump : constant String := Shell_Output ("/usr/sbin/ioreg -c IOHIDSystem -r -d 1");
       use Ada.Strings;
       use Ada.Strings.Fixed;
       Pos  : constant Natural := Index (Dump, "HIDIdleTime");
@@ -377,7 +377,7 @@ package body Beep.Platform.Samplers is
 
       if Running_Darwin then
          declare
-            Cpu_Text : constant String := Shell_Output ("sysctl -n kern.cp_time");
+            Cpu_Text : constant String := Shell_Output ("/usr/sbin/sysctl -n kern.cp_time");
             User_T   : Long_Long_Integer := 0;
             Nice_T   : Long_Long_Integer := 0;
             Sys_T    : Long_Long_Integer := 0;
@@ -452,9 +452,9 @@ package body Beep.Platform.Samplers is
 
       if Running_Darwin then
          declare
-            Processes_Text : constant String := Shell_Output ("ps -A -o pid= | wc -l");
-            Memory_Text    : constant String := Shell_Output ("memory_pressure -Q");
-            Load_Text      : constant String := Shell_Output ("sysctl -n vm.loadavg");
+            Processes_Text : constant String := Shell_Output ("/bin/ps -A -o pid= | /usr/bin/wc -l");
+            Memory_Text    : constant String := Shell_Output ("/usr/bin/memory_pressure -Q");
+            Load_Text      : constant String := Shell_Output ("/usr/sbin/sysctl -n vm.loadavg");
             Proc_Now       : Long_Long_Integer := 0;
             Mem_Now        : Float := 0.0;
             Load_Now       : Float := 0.0;
@@ -493,7 +493,7 @@ package body Beep.Platform.Samplers is
             if Delta_Mem < 0.0 then
                Delta_Mem := -Delta_Mem;
             end if;
-            if Delta_Mem > 0.01 then
+            if Delta_Mem > 0.006 then
                Add_Sample
                  (Batch,
                   (Kind => Memory,
@@ -514,6 +514,26 @@ package body Beep.Platform.Samplers is
                    Intensity => Clamp01 (Delta_Load * 3.0 + (Load_Now / 8.0)),
                    Timestamp => Timestamp,
                    Source => To_Unbounded_String ("darwin.sysctl.loadavg"),
+                   Cpu_Bucket => Idle));
+            end if;
+
+            --  Keep a gentle background stream when system load/memory are elevated.
+            if Mem_Now > 0.55 then
+               Add_Sample
+                 (Batch,
+                  (Kind => Memory,
+                   Intensity => Clamp01 (0.20 + Mem_Now * 0.55),
+                   Timestamp => Timestamp,
+                   Source => To_Unbounded_String ("darwin.memory_pressure.level"),
+                   Cpu_Bucket => Idle));
+            end if;
+            if Load_Now > 0.80 then
+               Add_Sample
+                 (Batch,
+                  (Kind => Beep.Core.Types.System,
+                   Intensity => Clamp01 (0.22 + Load_Now / 6.0),
+                   Timestamp => Timestamp,
+                   Source => To_Unbounded_String ("darwin.sysctl.loadavg.level"),
                    Cpu_Bucket => Idle));
             end if;
 
@@ -546,7 +566,7 @@ package body Beep.Platform.Samplers is
 
       if Running_Darwin then
          declare
-            Net_Text : constant String := Shell_Output ("netstat -ibn");
+            Net_Text : constant String := Shell_Output ("/usr/sbin/netstat -ibn");
             Rx_Now   : Long_Long_Integer := 0;
             Tx_Now   : Long_Long_Integer := 0;
             Delta_Rx : Long_Long_Integer := 0;
@@ -627,8 +647,8 @@ package body Beep.Platform.Samplers is
             if Idle_Ns < Sampler.Prev_Idle_Ns then
                declare
                   Drop_Ns : constant Long_Long_Integer := Sampler.Prev_Idle_Ns - Idle_Ns;
-                  K_Intensity : Float := Clamp01 (0.30 + Float (Drop_Ns) / 300_000_000.0);
-                  M_Intensity : Float := Clamp01 (0.22 + Float (Drop_Ns) / 420_000_000.0);
+                  K_Intensity : Float := Clamp01 (0.36 + Float (Drop_Ns) / 220_000_000.0);
+                  M_Intensity : Float := Clamp01 (0.28 + Float (Drop_Ns) / 340_000_000.0);
                begin
                   Add_Sample
                     (Batch,
@@ -638,16 +658,26 @@ package body Beep.Platform.Samplers is
                       Source => To_Unbounded_String ("darwin.hid.keyboard"),
                       Cpu_Bucket => Idle));
 
-                  if K_Intensity > 0.55 then
-                     Add_Sample
-                       (Batch,
-                        (Kind => Mouse,
-                         Intensity => M_Intensity,
-                         Timestamp => Timestamp,
-                         Source => To_Unbounded_String ("darwin.hid.pointer"),
-                         Cpu_Bucket => Idle));
-                  end if;
+                  Add_Sample
+                    (Batch,
+                     (Kind => Mouse,
+                      Intensity => M_Intensity,
+                      Timestamp => Timestamp,
+                      Source => To_Unbounded_String ("darwin.hid.pointer"),
+                      Cpu_Bucket => Idle));
+
+                  Sampler.Last_Emit_Ms := Timestamp;
                end;
+            elsif Idle_Ns < 260_000_000 and then (Sampler.Last_Emit_Ms = 0 or else Timestamp - Sampler.Last_Emit_Ms >= 140) then
+               --  While user is actively interacting, keep a light follow-up stream.
+               Add_Sample
+                 (Batch,
+                  (Kind => Keyboard,
+                   Intensity => 0.34,
+                   Timestamp => Timestamp,
+                   Source => To_Unbounded_String ("darwin.hid.keyboard.continuous"),
+                   Cpu_Bucket => Idle));
+               Sampler.Last_Emit_Ms := Timestamp;
             end if;
 
             Sampler.Prev_Idle_Ns := Idle_Ns;
