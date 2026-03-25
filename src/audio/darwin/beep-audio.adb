@@ -1,6 +1,7 @@
 with Ada.Calendar;
 with Ada.Characters.Handling;
 with Ada.Directories;
+with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Beep.Config;
@@ -15,6 +16,7 @@ package body Beep.Audio is
 
    Running_Darwin : constant Boolean := Ada.Directories.Exists ("/System/Library/Sounds");
    Last_Native_Play_Ms : Milliseconds := 0;
+   Last_Motif : Motif_Type := Bip;
 
    function C_System (Command : Interfaces.C.Strings.chars_ptr) return Interfaces.C.int
      with Import, Convention => C, External_Name => "system";
@@ -50,22 +52,75 @@ package body Beep.Audio is
       Flush;
    end Emit_Bell;
 
-   procedure Emit_Darwin_Native (Gain : Float) is
+   function Sound_Path_For_Motif (Motif : Motif_Type) return String is
+   begin
+      case Motif is
+         when Tick | Tsk =>
+            return "/System/Library/Sounds/Tink.aiff";
+         when Chirp | Bip =>
+            return "/System/Library/Sounds/Glass.aiff";
+         when Cluster | Run =>
+            return "/System/Library/Sounds/Funk.aiff";
+         when Yip | Zap =>
+            return "/System/Library/Sounds/Ping.aiff";
+         when Bloop =>
+            return "/System/Library/Sounds/Bottle.aiff";
+         when Stutter =>
+            return "/System/Library/Sounds/Pop.aiff";
+         when Drone | Hum | Pad =>
+            return "/System/Library/Sounds/Purr.aiff";
+         when Warble | Whirr | Wheee | Wobble =>
+            return "/System/Library/Sounds/Submarine.aiff";
+      end case;
+   end Sound_Path_For_Motif;
+
+   procedure Emit_Darwin_Native (Motif : Motif_Type; Gain : Float) is
+      use Ada.Strings;
+      use Ada.Strings.Fixed;
       Cmd : Interfaces.C.Strings.chars_ptr := Interfaces.C.Strings.Null_Ptr;
       Ts  : constant Milliseconds := Now_Ms;
       Rc  : Interfaces.C.int := 0;
+      Volume : Float := Gain;
+      Sound  : constant String := Sound_Path_For_Motif (Motif);
    begin
       if Gain < 0.10 then
          return;
       end if;
 
-      --  Rate limit system sound launches to avoid process spam.
-      if Last_Native_Play_Ms > 0 and then Ts - Last_Native_Play_Ms < 90 then
+      --  Ambient motifs are intentionally sparse on macOS system-sound backend.
+      if (Motif = Drone or else Motif = Hum or else Motif = Pad)
+        and then Last_Native_Play_Ms > 0
+        and then Ts - Last_Native_Play_Ms < 260
+      then
          return;
       end if;
-      Last_Native_Play_Ms := Ts;
 
-      Cmd := Interfaces.C.Strings.New_String ("/bin/sh -c '/usr/bin/afplay /System/Library/Sounds/Pop.aiff >/dev/null 2>&1 &'" );
+      --  Rate limit system sound launches to avoid process spam.
+      if Last_Native_Play_Ms > 0 and then Ts - Last_Native_Play_Ms < 110 then
+         return;
+      end if;
+
+      --  Avoid hammering the same motif repeatedly in very short windows.
+      if Motif = Last_Motif and then Last_Native_Play_Ms > 0 and then Ts - Last_Native_Play_Ms < 150 then
+         return;
+      end if;
+
+      Last_Native_Play_Ms := Ts;
+      Last_Motif := Motif;
+
+      if Volume < 0.20 then
+         Volume := 0.20;
+      elsif Volume > 0.95 then
+         Volume := 0.95;
+      end if;
+
+      Cmd :=
+        Interfaces.C.Strings.New_String
+          ("/bin/sh -c '/usr/bin/afplay -v "
+           & Trim (Float'Image (Volume), Both)
+           & " "
+           & Sound
+           & " >/dev/null 2>&1 &'");
       Rc := C_System (Cmd);
       pragma Unreferenced (Rc);
       Interfaces.C.Strings.Free (Cmd);
@@ -135,7 +190,7 @@ package body Beep.Audio is
 
          when Alsa_Backend =>
             if Running_Darwin then
-               Emit_Darwin_Native (Gain);
+               Emit_Darwin_Native (Event.Motif, Gain);
             else
                Emit_Bell (Gain);
             end if;
