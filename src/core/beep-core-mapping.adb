@@ -118,6 +118,7 @@ package body Beep.Core.Mapping is
       Dt              : Milliseconds := 60;
       Alpha           : Float;
       Density         : Float;
+      Burst           : Float;
       Motif           : Motif_Type := Bip;
       Reason          : Unbounded_String := Null_Unbounded_String;
       Gain            : Float := Sample.Intensity;
@@ -129,6 +130,7 @@ package body Beep.Core.Mapping is
       Dur_Scale       : Float;
       Min_Scale       : Float;
       Random_Chance   : Float;
+      Density_Scale   : Float;
       Options         : Motif_Vectors.Vector;
       Intensity_Clamp : Float := Clamp01 (Sample.Intensity);
    begin
@@ -146,6 +148,8 @@ package body Beep.Core.Mapping is
       Alpha := Clamp01 (Float (Dt) / 220.0);
       State.Activity_Ema := State.Activity_Ema * (1.0 - Alpha) + Intensity_Clamp * Alpha;
       Density := Clamp01 (Float'Max (Sample.Intensity, State.Activity_Ema));
+      Burst := Clamp01 (Cfg.Burst_Density);
+      Density_Scale := 0.40 + Burst * 1.10;
 
       case Sample.Kind is
          when Keyboard =>
@@ -354,7 +358,7 @@ package body Beep.Core.Mapping is
       end case;
 
       Duration := Base_Duration_For_Motif (Motif);
-      Drop_Chance := Clamp01 (0.40 - Density * 0.25);
+      Drop_Chance := Clamp01 ((0.40 - Density * 0.25) / Density_Scale);
 
       if Motif = Hum or else Motif = Drone or else Motif = Wobble or else Motif = Pad then
          Drop_Chance := Clamp01 (0.22 - Density * 0.10);
@@ -372,6 +376,7 @@ package body Beep.Core.Mapping is
       end if;
 
       Effective_Gap := Cfg.Min_Gap_Ms - Milliseconds (Float (Cfg.Min_Gap_Ms) * Density * 0.82);
+      Effective_Gap := Milliseconds (Float (Effective_Gap) / Density_Scale);
       Jitter := Milliseconds (Integer (Next_Rand (State) mod 17) - 8);
       Effective_Gap := Effective_Gap + Jitter;
       if Effective_Gap < 12 then
@@ -383,6 +388,7 @@ package body Beep.Core.Mapping is
       end if;
 
       Motif_Cooldown := Milliseconds (Float (Cfg.Cooldown_Ms) * (1.0 - Density));
+      Motif_Cooldown := Milliseconds (Float (Motif_Cooldown) / Density_Scale);
       if Motif_Cooldown < 8 then
          Motif_Cooldown := 8;
       end if;

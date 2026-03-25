@@ -150,6 +150,7 @@ begin
    if Cli_Debug_Fake then Cfg.Debug_Fake_Input := True; end if;
    if Cli_Audio_Null then Cfg.Audio_Backend := To_Unbounded_String ("null"); end if;
    if Cli_Audio_Bell then Cfg.Audio_Backend := To_Unbounded_String ("bell"); end if;
+   Cfg.Engine.Burst_Density := Cfg.Burst_Density;
 
    Ada.Text_IO.Put_Line ("profile=" & To_String (Cfg.Profile)
       & " config=" & To_String (Config_Path)
@@ -216,6 +217,6 @@ begin
          end if;
       end;
 
-      delay 0.30;
+      delay 0.04;
    end loop;
 end Beep_Main;

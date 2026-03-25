@@ -3,6 +3,7 @@ with Ada.Numerics;
 with Ada.Numerics.Elementary_Functions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Beep.Config;
 with Interfaces;
 with Interfaces.C;
 with Interfaces.C.Strings;
@@ -18,6 +19,66 @@ package body Beep.Audio is
    Snd_Pcm_Stream_Playback : constant int := 0;
    Snd_Pcm_Access_Rw_Interleaved : constant int := 3;
    Snd_Pcm_Format_S16_Le : constant int := 2;
+
+   type Queued_Event is record
+      Has_Value : Boolean := False;
+      Event     : Sound_Event;
+   end record;
+
+   type Event_Buffer is array (Positive range 1 .. 512) of Sound_Event;
+
+   protected type Event_Queue is
+      procedure Push (Event : Sound_Event);
+      entry Pop (Item : out Queued_Event);
+      procedure Stop;
+      procedure Start;
+   private
+      Buffer         : Event_Buffer;
+      Head           : Positive := 1;
+      Tail           : Positive := 1;
+      Count          : Natural := 0;
+      Stop_Requested : Boolean := False;
+   end Event_Queue;
+
+   protected body Event_Queue is
+      procedure Push (Event : Sound_Event) is
+      begin
+         if Stop_Requested then
+            return;
+         end if;
+
+         if Count = Buffer'Length then
+            Head := (if Head = Buffer'Last then Buffer'First else Head + 1);
+            Count := Count - 1;
+         end if;
+
+         Buffer (Tail) := Event;
+         Tail := (if Tail = Buffer'Last then Buffer'First else Tail + 1);
+         Count := Count + 1;
+      end Push;
+
+      entry Pop (Item : out Queued_Event) when Count > 0 or else Stop_Requested is
+      begin
+         if Count = 0 then
+            Item.Has_Value := False;
+         else
+            Item.Has_Value := True;
+            Item.Event := Buffer (Head);
+            Head := (if Head = Buffer'Last then Buffer'First else Head + 1);
+            Count := Count - 1;
+         end if;
+      end Pop;
+
+      procedure Stop is
+      begin
+         Stop_Requested := True;
+      end Stop;
+
+      procedure Start is
+      begin
+         Stop_Requested := False;
+      end Start;
+   end Event_Queue;
 
    function snd_pcm_open
      (Pcm    : access System.Address;
@@ -81,11 +142,11 @@ package body Beep.Audio is
       D : Integer := Event.Duration_Ms;
    begin
       if Event.Motif = Drone or else Event.Motif = Hum or else Event.Motif = Pad then
-         D := 140;
-      elsif D > 260 then
-         D := 260;
-      elsif D < 18 then
-         D := 18;
+         D := 95;
+      elsif D > 160 then
+         D := 160;
+      elsif D < 14 then
+         D := 14;
       end if;
       return Positive (D);
    end Effective_Duration_Ms;
@@ -175,14 +236,60 @@ package body Beep.Audio is
       end if;
    end Emit_Alsa;
 
+   Queue : Event_Queue;
+
+   G_Backend     : Backend_Kind := Null_Backend;
+   G_Alsa_Handle : System.Address := System.Null_Address;
+   G_Sample_Rate : unsigned := 44_100;
+   G_Active      : Boolean := False;
+
+   task type Audio_Player;
+
+   task body Audio_Player is
+      Item   : Queued_Event;
+      Shadow : Audio_Engine;
+   begin
+      loop
+         Queue.Pop (Item);
+         exit when not Item.Has_Value;
+
+         if G_Active then
+            case G_Backend is
+               when Null_Backend =>
+                  null;
+               when Bell_Backend =>
+                  Emit_Bell (Item.Event.Gain);
+               when Alsa_Backend =>
+                  if G_Alsa_Handle = System.Null_Address then
+                     Emit_Bell (Item.Event.Gain);
+                  else
+                     Shadow :=
+                       (Backend => G_Backend,
+                        Alsa_Handle => G_Alsa_Handle,
+                        Sample_Rate => G_Sample_Rate,
+                        Active => G_Active);
+                     Emit_Alsa (Shadow, Item.Event, Item.Event.Gain);
+                  end if;
+            end case;
+         end if;
+      end loop;
+   end Audio_Player;
+
+   Player : Audio_Player;
+
    procedure Initialize (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config) is
-      Requested : constant Backend_Kind := Backend_From_Config (Cfg);
-      Device    : aliased System.Address := System.Null_Address;
+      Requested   : constant Backend_Kind := Backend_From_Config (Cfg);
+      Device      : aliased System.Address := System.Null_Address;
       Device_Name : Interfaces.C.Strings.chars_ptr := Interfaces.C.Strings.Null_Ptr;
-      Err       : int;
+      Err         : int;
    begin
       Engine := (others => <>);
       Engine.Backend := Requested;
+      Queue.Start;
+      G_Backend := Requested;
+      G_Alsa_Handle := System.Null_Address;
+      G_Sample_Rate := Engine.Sample_Rate;
+      G_Active := False;
 
       if Requested = Null_Backend then
          return;
@@ -190,6 +297,7 @@ package body Beep.Audio is
 
       if Requested = Bell_Backend then
          Engine.Active := True;
+         G_Active := True;
          return;
       end if;
 
@@ -199,6 +307,8 @@ package body Beep.Audio is
       if Err < 0 then
          Engine.Backend := Bell_Backend;
          Engine.Active := True;
+         G_Backend := Bell_Backend;
+         G_Active := True;
          Ada.Text_IO.Put_Line ("[warn] ALSA unavailable; falling back to terminal bell backend");
          return;
       end if;
@@ -212,7 +322,7 @@ package body Beep.Audio is
            1,
            Engine.Sample_Rate,
            1,
-           100_000);
+           50_000);
       if Err < 0 then
          declare
             Ignore : constant int := snd_pcm_close (Engine.Alsa_Handle);
@@ -222,11 +332,17 @@ package body Beep.Audio is
          Engine.Alsa_Handle := System.Null_Address;
          Engine.Backend := Bell_Backend;
          Engine.Active := True;
+         G_Backend := Bell_Backend;
+         G_Alsa_Handle := System.Null_Address;
+         G_Active := True;
          Ada.Text_IO.Put_Line ("[warn] ALSA config failed; falling back to terminal bell backend");
          return;
       end if;
 
       Engine.Active := True;
+      G_Backend := Engine.Backend;
+      G_Alsa_Handle := Engine.Alsa_Handle;
+      G_Active := True;
    end Initialize;
 
    procedure Emit
@@ -234,33 +350,30 @@ package body Beep.Audio is
       Cfg    : Beep.Config.App_Config;
       Event  : Sound_Event)
    is
-      Gain : constant Float := Clamp01 (Event.Gain * Cfg.Master_Volume);
+      Q : Sound_Event := Event;
    begin
       if not Engine.Active then
          return;
       end if;
 
-      case Engine.Backend is
-         when Null_Backend =>
-            null;
-         when Bell_Backend =>
-            Emit_Bell (Gain);
-         when Alsa_Backend =>
-            if Engine.Alsa_Handle = System.Null_Address then
-               Emit_Bell (Gain);
-            else
-               Emit_Alsa (Engine, Event, Gain);
-            end if;
-      end case;
+      Q.Gain := Clamp01 (Event.Gain * Cfg.Master_Volume);
+      Queue.Push (Q);
    end Emit;
 
    procedure Shutdown (Engine : in out Audio_Engine) is
       Ignore : int;
    begin
+      Queue.Stop;
+      G_Active := False;
+
       if Engine.Alsa_Handle /= System.Null_Address then
          Ignore := snd_pcm_close (Engine.Alsa_Handle);
          pragma Unreferenced (Ignore);
       end if;
+
+      G_Backend := Null_Backend;
+      G_Alsa_Handle := System.Null_Address;
+
       Engine := (others => <>);
    end Shutdown;
 

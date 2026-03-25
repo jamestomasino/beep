@@ -614,6 +614,12 @@ package body Beep.Linux.Samplers is
       Keys_Ok     : C_Int;
       Delta_Mouse : C_Int := 0;
       Key_Changes : Natural := 0;
+      Button_Changes : C_UInt := 0;
+      Button1_Mask   : constant C_UInt := 16#00000100#;
+      Button2_Mask   : constant C_UInt := 16#00000200#;
+      Button3_Mask   : constant C_UInt := 16#00000400#;
+      Button4_Mask   : constant C_UInt := 16#00000800#;
+      Button5_Mask   : constant C_UInt := 16#00001000#;
    begin
       if not Sampler.Is_Available or else Sampler.Display = System.Null_Address then
          return Batch;
@@ -639,6 +645,7 @@ package body Beep.Linux.Samplers is
       if not Sampler.Primed then
          Sampler.Prev_Root_X := Root_X;
          Sampler.Prev_Root_Y := Root_Y;
+         Sampler.Prev_Mask := Mask_Ret;
          Sampler.Prev_Keymap := Current_Map;
          Sampler.Primed := True;
          return Batch;
@@ -649,9 +656,20 @@ package body Beep.Linux.Samplers is
          Add_Sample
            (Batch,
             (Kind => Mouse,
-             Intensity => Clamp01 (Float (Delta_Mouse) / 160.0),
+             Intensity => Clamp01 (Float (Delta_Mouse) / 90.0),
              Timestamp => Timestamp,
              Source => To_Unbounded_String ("linux.x11.pointer.move"),
+             Cpu_Bucket => Idle));
+      end if;
+
+      Button_Changes := (Mask_Ret xor Sampler.Prev_Mask) and (Button1_Mask or Button2_Mask or Button3_Mask or Button4_Mask or Button5_Mask);
+      if Button_Changes /= 0 then
+         Add_Sample
+           (Batch,
+            (Kind => Mouse,
+             Intensity => 0.92,
+             Timestamp => Timestamp,
+             Source => To_Unbounded_String ("linux.x11.mouse.click"),
              Cpu_Bucket => Idle));
       end if;
 
@@ -671,6 +689,7 @@ package body Beep.Linux.Samplers is
 
       Sampler.Prev_Root_X := Root_X;
       Sampler.Prev_Root_Y := Root_Y;
+      Sampler.Prev_Mask := Mask_Ret;
       Sampler.Prev_Keymap := Current_Map;
       return Batch;
    end Poll_X11;

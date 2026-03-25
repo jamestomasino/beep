@@ -78,6 +78,7 @@ package Beep.Core.Types is
       Network_Chirp_Chance      : Float := 0.46;
       Network_Stutter_Intensity : Float := 0.72;
       Network_Stutter_Chance    : Float := 0.30;
+      Burst_Density             : Float := 1.0;
       Min_Gap_Ms                : Milliseconds := 70;
       Cooldown_Ms               : Milliseconds := 180;
    end record;

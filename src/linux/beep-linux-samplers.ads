@@ -86,6 +86,7 @@ private
       Root         : Interfaces.C.unsigned_long := 0;
       Prev_Root_X  : Interfaces.C.int := 0;
       Prev_Root_Y  : Interfaces.C.int := 0;
+      Prev_Mask    : Interfaces.C.unsigned := 0;
       Prev_Keymap  : Keymap_Bits := (others => 0);
       Primed       : Boolean := False;
       Is_Available : Boolean := False;
