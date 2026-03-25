@@ -4,6 +4,8 @@ with Ada.Numerics.Elementary_Functions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Beep.Config;
+with Beep.Audio.Runtime;
+with Beep.Audio.Shared;
 with Interfaces;
 with Interfaces.C;
 with Interfaces.C.Strings;
@@ -20,65 +22,7 @@ package body Beep.Audio is
    Snd_Pcm_Access_Rw_Interleaved : constant int := 3;
    Snd_Pcm_Format_S16_Le : constant int := 2;
 
-   type Queued_Event is record
-      Has_Value : Boolean := False;
-      Event     : Sound_Event;
-   end record;
-
-   type Event_Buffer is array (Positive range 1 .. 512) of Sound_Event;
-
-   protected type Event_Queue is
-      procedure Push (Event : Sound_Event);
-      entry Pop (Item : out Queued_Event);
-      procedure Stop;
-      procedure Start;
-   private
-      Buffer         : Event_Buffer;
-      Head           : Positive := 1;
-      Tail           : Positive := 1;
-      Count          : Natural := 0;
-      Stop_Requested : Boolean := False;
-   end Event_Queue;
-
-   protected body Event_Queue is
-      procedure Push (Event : Sound_Event) is
-      begin
-         if Stop_Requested then
-            return;
-         end if;
-
-         if Count = Buffer'Length then
-            Head := (if Head = Buffer'Last then Buffer'First else Head + 1);
-            Count := Count - 1;
-         end if;
-
-         Buffer (Tail) := Event;
-         Tail := (if Tail = Buffer'Last then Buffer'First else Tail + 1);
-         Count := Count + 1;
-      end Push;
-
-      entry Pop (Item : out Queued_Event) when Count > 0 or else Stop_Requested is
-      begin
-         if Count = 0 then
-            Item.Has_Value := False;
-         else
-            Item.Has_Value := True;
-            Item.Event := Buffer (Head);
-            Head := (if Head = Buffer'Last then Buffer'First else Head + 1);
-            Count := Count - 1;
-         end if;
-      end Pop;
-
-      procedure Stop is
-      begin
-         Stop_Requested := True;
-      end Stop;
-
-      procedure Start is
-      begin
-         Stop_Requested := False;
-      end Start;
-   end Event_Queue;
+   subtype Queued_Event is Beep.Audio.Runtime.Queued_Event;
 
    function snd_pcm_open
      (Pcm    : access System.Address;
@@ -115,16 +59,8 @@ package body Beep.Audio is
       Silent : int) return int
      with Import, Convention => C, External_Name => "snd_pcm_recover";
 
-   function Clamp01 (Value : Float) return Float is
-   begin
-      if Value < 0.0 then
-         return 0.0;
-      elsif Value > 1.0 then
-         return 1.0;
-      else
-         return Value;
-      end if;
-   end Clamp01;
+   function Clamp01 (Value : Float) return Float
+     renames Beep.Audio.Shared.Clamp01;
 
    function Backend_From_Config (Cfg : Beep.Config.App_Config) return Backend_Kind is
       Raw : constant String := Ada.Characters.Handling.To_Lower (To_String (Cfg.Audio_Backend));
@@ -138,194 +74,24 @@ package body Beep.Audio is
       end if;
    end Backend_From_Config;
 
-   function Effective_Duration_Ms (Event : Sound_Event) return Positive is
-      D : Integer := Event.Duration_Ms;
-   begin
-      if Event.Motif = Drone or else Event.Motif = Hum or else Event.Motif = Pad then
-         D := 95;
-      elsif D > 160 then
-         D := 160;
-      elsif D < 14 then
-         D := 14;
-      end if;
-      return Positive (D);
-   end Effective_Duration_Ms;
+   function Effective_Duration_Ms (Event : Sound_Event) return Positive
+     renames Beep.Audio.Shared.Effective_Duration_Ms;
 
-   function Motif_Frequency (Motif : Motif_Type) return Float is
-   begin
-      case Motif is
-         when Bip => return 740.0;
-         when Chirp => return 920.0;
-         when Tick => return 1200.0;
-         when Cluster => return 860.0;
-         when Run => return 680.0;
-         when Yip => return 1080.0;
-         when Stutter => return 560.0;
-         when Bloop => return 420.0;
-         when Zap => return 1600.0;
-         when Drone => return 90.0;
-         when Hum => return 120.0;
-         when Pad => return 220.0;
-         when Warble => return 360.0;
-         when Whirr => return 510.0;
-         when Wheee => return 740.0;
-         when Wobble => return 150.0;
-         when Tsk => return 1400.0;
-      end case;
-   end Motif_Frequency;
+   function Motif_Frequency (Motif : Motif_Type) return Float
+     renames Beep.Audio.Shared.Motif_Frequency;
 
-   function Is_Ambient_Motif (Motif : Motif_Type) return Boolean is
-   begin
-      return Motif = Drone or else Motif = Hum or else Motif = Pad;
-   end Is_Ambient_Motif;
+   function Is_Ambient_Motif (Motif : Motif_Type) return Boolean
+     renames Beep.Audio.Shared.Is_Ambient_Motif;
 
    function Mid_Blend_For_Motif
      (Motif     : Motif_Type;
       Timestamp : Milliseconds;
       Mid_Min   : Float;
       Mid_Max   : Float) return Float
-   is
-      Jitter : constant Float := Float ((Timestamp mod 17) + 1) / 18.0;
-      Base   : Float;
-   begin
-      case Motif is
-         when Tick | Tsk | Zap =>
-            Base := 0.16 + Jitter * 0.18;
-         when Cluster | Run | Stutter =>
-            Base := 0.28 + Jitter * 0.24;
-         when Chirp | Bip | Bloop | Yip =>
-            Base := 0.20 + Jitter * 0.24;
-         when Wheee | Whirr | Warble | Wobble =>
-            Base := 0.26 + Jitter * 0.26;
-         when others =>
-            Base := 0.24;
-      end case;
-      return Mid_Min + (Mid_Max - Mid_Min) * Clamp01 (Base);
-   end Mid_Blend_For_Motif;
-
-   protected type Mix_Params is
-      procedure Set (Cfg : Beep.Config.Audio_Mix_Config);
-      procedure Get
-        (Ambient_Drive : out Float;
-         Ambient_Max   : out Float;
-         Ambient_Decay : out Float;
-         Mid_Min       : out Float;
-         Mid_Max       : out Float;
-         Fore_Attn     : out Float);
-   private
-      Drive_Param : Float := 0.32;
-      Max_Param   : Float := 0.30;
-      Decay_Param : Float := 0.992;
-      Mid_Min_P   : Float := 0.16;
-      Mid_Max_P   : Float := 0.52;
-      Fore_Attn_P : Float := 0.55;
-   end Mix_Params;
-
-   protected body Mix_Params is
-      procedure Set (Cfg : Beep.Config.Audio_Mix_Config) is
-      begin
-         Drive_Param := Clamp01 (Cfg.Ambient_Bed_Drive);
-         Max_Param := Clamp01 (Cfg.Ambient_Bed_Max);
-         if Max_Param < 0.02 then
-            Max_Param := 0.02;
-         end if;
-
-         if Cfg.Ambient_Bed_Decay > 0.0 and then Cfg.Ambient_Bed_Decay < 1.0 then
-            Decay_Param := Cfg.Ambient_Bed_Decay;
-         end if;
-
-         Mid_Min_P := Clamp01 (Cfg.Mid_Blend_Min);
-         Mid_Max_P := Clamp01 (Cfg.Mid_Blend_Max);
-         if Mid_Max_P < Mid_Min_P then
-            declare
-               Tmp : constant Float := Mid_Max_P;
-            begin
-               Mid_Max_P := Mid_Min_P;
-               Mid_Min_P := Tmp;
-            end;
-         end if;
-
-         Fore_Attn_P := Clamp01 (Cfg.Mid_Foreground_Attenuation);
-      end Set;
-
-      procedure Get
-        (Ambient_Drive : out Float;
-         Ambient_Max   : out Float;
-         Ambient_Decay : out Float;
-         Mid_Min       : out Float;
-         Mid_Max       : out Float;
-         Fore_Attn     : out Float)
-      is
-      begin
-         Ambient_Drive := Drive_Param;
-         Ambient_Max := Max_Param;
-         Ambient_Decay := Decay_Param;
-         Mid_Min := Mid_Min_P;
-         Mid_Max := Mid_Max_P;
-         Fore_Attn := Fore_Attn_P;
-      end Get;
-   end Mix_Params;
+     renames Beep.Audio.Shared.Mid_Blend_For_Motif;
 
    G_Ambient_Phase : Float := 0.0;
-   Mix : Mix_Params;
-
-   protected type Ambient_Control is
-      procedure Drive (Motif : Motif_Type; Gain : Float; Drive_Scale : Float; Max_Level : Float);
-      procedure Snapshot (Freq : out Float; Gain : out Float; Decay : Float);
-      procedure Reset;
-   private
-      Target_Freq  : Float := 92.0;
-      Current_Freq : Float := 92.0;
-      Level        : Float := 0.0;
-   end Ambient_Control;
-
-   protected body Ambient_Control is
-      procedure Drive (Motif : Motif_Type; Gain : Float; Drive_Scale : Float; Max_Level : Float) is
-         Driven : Float := Clamp01 (Gain) * Drive_Scale;
-      begin
-         case Motif is
-            when Drone =>
-               Target_Freq := 82.0;
-               Driven := Driven * 1.00;
-            when Hum =>
-               Target_Freq := 112.0;
-               Driven := Driven * 0.90;
-            when Pad =>
-               Target_Freq := 174.0;
-               Driven := Driven * 0.75;
-            when others =>
-               return;
-         end case;
-
-         if Driven > Level then
-            Level := Driven;
-         else
-            Level := Level + (Driven - Level) * 0.30;
-         end if;
-
-         if Level > Max_Level then
-            Level := Max_Level;
-         end if;
-      end Drive;
-
-      procedure Snapshot (Freq : out Float; Gain : out Float; Decay : Float) is
-      begin
-         Current_Freq := Current_Freq + (Target_Freq - Current_Freq) * 0.10;
-         Level := Level * Decay;
-         if Level < 0.001 then
-            Level := 0.0;
-         end if;
-         Freq := Current_Freq;
-         Gain := Level;
-      end Snapshot;
-
-      procedure Reset is
-      begin
-         Target_Freq := 92.0;
-         Current_Freq := 92.0;
-         Level := 0.0;
-      end Reset;
-   end Ambient_Control;
+   Mix : Beep.Audio.Runtime.Mix_Params;
 
    procedure Emit_Bell (Gain : Float) is
       use Ada.Text_IO;
@@ -463,8 +229,8 @@ package body Beep.Audio is
       end if;
    end Emit_Ambient_Chunk;
 
-   Queue : Event_Queue;
-   Ambient : Ambient_Control;
+   Queue : Beep.Audio.Runtime.Event_Queue;
+   Ambient : Beep.Audio.Runtime.Ambient_Control;
 
    G_Backend     : Backend_Kind := Null_Backend;
    G_Alsa_Handle : System.Address := System.Null_Address;
@@ -488,9 +254,10 @@ package body Beep.Audio is
       loop
          select
             Queue.Pop (Item);
-            exit when not Item.Has_Value;
-
-            if G_Active then
+            if not Item.Has_Value then
+               --  Queue wake-up (for shutdown/restart), continue waiting.
+               null;
+            elsif G_Active then
                case G_Backend is
                   when Null_Backend =>
                      null;
@@ -511,6 +278,7 @@ package body Beep.Audio is
                      end if;
                end case;
             end if;
+
          or
             delay 0.05;
             if G_Active and then G_Backend = Alsa_Backend and then G_Alsa_Handle /= System.Null_Address then

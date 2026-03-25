@@ -1,0 +1,105 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  ALIRE_VERSION: "2.1.0"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  linux-validate:
+    name: Linux Build/Test/Prove
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install system toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gnat gprbuild spark2014 curl unzip
+
+      - name: Install Alire
+        shell: bash
+        run: |
+          set -euo pipefail
+          download_url="https://github.com/alire-project/alire/releases/download/v${ALIRE_VERSION}/alr-${ALIRE_VERSION}-bin-x86_64-linux.zip"
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --location "$download_url" -o alr.zip
+          unzip -q alr.zip bin/alr
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 bin/alr "$HOME/.local/bin/alr"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          alr --version
+          gprbuild --version
+          gnatprove --version
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gprclean -P beep.gpr
+          gprbuild -p -P beep.gpr
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./obj/beep_core_tests
+          ./obj/beep_config_tests
+
+      - name: Run SPARK proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/prove.sh
+
+  darwin-compile:
+    name: macOS Darwin Compile
+    runs-on: macos-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Alire
+        shell: bash
+        run: |
+          set -euo pipefail
+          download_url="https://github.com/alire-project/alire/releases/download/v${ALIRE_VERSION}/alr-${ALIRE_VERSION}-bin-aarch64-macos.zip"
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --location "$download_url" -o alr.zip
+          unzip -q alr.zip bin/alr
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 bin/alr "$HOME/.local/bin/alr"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          alr --version
+
+      - name: Darwin compile check
+        shell: bash
+        run: |
+          set -euo pipefail
+          BEEP_OS=darwin alr -n update
+          BEEP_OS=darwin alr -n exec -- gprbuild -c -p -P beep.gpr -XBEEP_OS=darwin

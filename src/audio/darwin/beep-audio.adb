@@ -1,32 +1,32 @@
-with Ada.Calendar;
 with Ada.Characters.Handling;
-with Ada.Directories;
-with Ada.Strings.Fixed;
+with Ada.Numerics;
+with Ada.Numerics.Elementary_Functions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Beep.Audio.Runtime;
+with Beep.Audio.Shared;
 with Beep.Config;
 with Interfaces.C;
-with Interfaces.C.Strings;
+with System;
 
 package body Beep.Audio is
    use Ada.Strings.Unbounded;
    use Beep.Core.Types;
+   use Interfaces.C;
 
-   Epoch : constant Ada.Calendar.Time := Ada.Calendar.Time_Of (1970, 1, 1, 0.0);
+   subtype Queued_Event is Beep.Audio.Runtime.Queued_Event;
 
-   Running_Darwin : constant Boolean := Ada.Directories.Exists ("/System/Library/Sounds");
-   Last_Native_Play_Ms : Milliseconds := 0;
-   Last_Motif : Motif_Type := Bip;
+   function beep_audio_stream_init (Sample_Rate : unsigned) return int
+     with Import, Convention => C, External_Name => "beep_audio_stream_init";
 
-   function C_System (Command : Interfaces.C.Strings.chars_ptr) return Interfaces.C.int
-     with Import, Convention => C, External_Name => "system";
+   function beep_audio_stream_write (Samples : System.Address; Frames : unsigned) return int
+     with Import, Convention => C, External_Name => "beep_audio_stream_write";
 
-   function Now_Ms return Milliseconds is
-      Now_Time : constant Ada.Calendar.Time := Ada.Calendar.Clock;
-      Elapsed  : constant Duration := Ada.Calendar."-" (Now_Time, Epoch);
-   begin
-      return Milliseconds (Long_Long_Integer (Elapsed * 1000.0));
-   end Now_Ms;
+   procedure beep_audio_stream_shutdown
+     with Import, Convention => C, External_Name => "beep_audio_stream_shutdown";
+
+   function Clamp01 (Value : Float) return Float
+     renames Beep.Audio.Shared.Clamp01;
 
    function Backend_From_Config (Cfg : Beep.Config.App_Config) return Backend_Kind is
       Raw : constant String := Ada.Characters.Handling.To_Lower (To_String (Cfg.Audio_Backend));
@@ -42,6 +42,25 @@ package body Beep.Audio is
       end if;
    end Backend_From_Config;
 
+   function Effective_Duration_Ms (Event : Sound_Event) return Positive
+     renames Beep.Audio.Shared.Effective_Duration_Ms;
+
+   function Motif_Frequency (Motif : Motif_Type) return Float
+     renames Beep.Audio.Shared.Motif_Frequency;
+
+   function Is_Ambient_Motif (Motif : Motif_Type) return Boolean
+     renames Beep.Audio.Shared.Is_Ambient_Motif;
+
+   function Mid_Blend_For_Motif
+     (Motif     : Motif_Type;
+      Timestamp : Milliseconds;
+      Mid_Min   : Float;
+      Mid_Max   : Float) return Float
+     renames Beep.Audio.Shared.Mid_Blend_For_Motif;
+
+   G_Ambient_Phase : Float := 0.0;
+   Mix : Beep.Audio.Runtime.Mix_Params;
+
    procedure Emit_Bell (Gain : Float) is
       use Ada.Text_IO;
    begin
@@ -52,114 +71,226 @@ package body Beep.Audio is
       Flush;
    end Emit_Bell;
 
-   function Sound_Path_For_Motif (Motif : Motif_Type) return String is
+   procedure Emit_Stream
+     (Engine : in out Audio_Engine;
+      Event  : Sound_Event;
+      Gain   : Float;
+      Ambient_Freq : Float := 0.0;
+      Ambient_Gain : Float := 0.0;
+      Mid_Min      : Float := 0.16;
+      Mid_Max      : Float := 0.52;
+      Fore_Attn    : Float := 0.55)
+   is
+      Duration_Ms : constant Positive := Effective_Duration_Ms (Event);
+      Frames      : constant Positive := Positive (Integer (Engine.Sample_Rate) * Duration_Ms / 1000);
+      Frequency   : constant Float := Motif_Frequency (Event.Motif);
+      type Sample_Buffer is array (Positive range <>) of aliased Interfaces.C.C_float;
+      Buffer      : Sample_Buffer (1 .. Frames);
+      Two_Pi      : constant Float := 2.0 * Ada.Numerics.Pi;
+      Rate_F      : constant Float := Float (Engine.Sample_Rate);
+      Rc          : int;
+      Ambient_Phase_Step : constant Float := Two_Pi * Ambient_Freq / Rate_F;
+      Mid_Blend   : constant Float := Mid_Blend_For_Motif (Event.Motif, Event.Timestamp, Mid_Min, Mid_Max);
+      Fore_Blend  : constant Float := 1.0 - Mid_Blend * Fore_Attn;
    begin
-      case Motif is
-         when Tick | Tsk =>
-            return "/System/Library/Sounds/Tink.aiff";
-         when Chirp | Bip =>
-            return "/System/Library/Sounds/Glass.aiff";
-         when Cluster | Run =>
-            return "/System/Library/Sounds/Funk.aiff";
-         when Yip | Zap =>
-            return "/System/Library/Sounds/Ping.aiff";
-         when Bloop =>
-            return "/System/Library/Sounds/Bottle.aiff";
-         when Stutter =>
-            return "/System/Library/Sounds/Pop.aiff";
-         when Drone | Hum | Pad =>
-            return "/System/Library/Sounds/Purr.aiff";
-         when Warble | Whirr | Wheee | Wobble =>
-            return "/System/Library/Sounds/Submarine.aiff";
-      end case;
-   end Sound_Path_For_Motif;
+      for I in Buffer'Range loop
+         declare
+            T          : constant Float := Float (I - 1) / Rate_F;
+            Phase      : constant Float := Two_Pi * Frequency * T;
+            Mid_Phase  : constant Float := Two_Pi * (Frequency * 0.62) * T;
+            N          : constant Float := Float (I - 1) / Float (Buffer'Length);
+            Envelope   : Float := 1.0;
+            Fore_S     : Float;
+            Mid_S      : Float;
+            Sample_F32 : Float;
+            Ambient_S  : Float := 0.0;
+         begin
+            if N < 0.08 then
+               Envelope := N / 0.08;
+            elsif N > 0.88 then
+               Envelope := (1.0 - N) / 0.12;
+            end if;
+            if Envelope < 0.0 then
+               Envelope := 0.0;
+            end if;
 
-   procedure Emit_Darwin_Native (Motif : Motif_Type; Gain : Float) is
-      use Ada.Strings;
-      use Ada.Strings.Fixed;
-      Cmd : Interfaces.C.Strings.chars_ptr := Interfaces.C.Strings.Null_Ptr;
-      Ts  : constant Milliseconds := Now_Ms;
-      Rc  : Interfaces.C.int := 0;
-      Volume : Float := Gain;
-      Sound  : constant String := Sound_Path_For_Motif (Motif);
-   begin
-      if Gain < 0.10 then
-         return;
-      end if;
+            if Ambient_Gain > 0.0 then
+               Ambient_S := Ada.Numerics.Elementary_Functions.Sin (G_Ambient_Phase) * Ambient_Gain;
+               G_Ambient_Phase := G_Ambient_Phase + Ambient_Phase_Step;
+               if G_Ambient_Phase > Two_Pi then
+                  G_Ambient_Phase := G_Ambient_Phase - Two_Pi;
+               end if;
+            end if;
 
-      --  Ambient motifs are intentionally sparse on macOS system-sound backend.
-      if (Motif = Drone or else Motif = Hum or else Motif = Pad)
-        and then Last_Native_Play_Ms > 0
-        and then Ts - Last_Native_Play_Ms < 260
-      then
-         return;
-      end if;
+            Fore_S := Ada.Numerics.Elementary_Functions.Sin (Phase) * Clamp01 (Gain) * Envelope * Fore_Blend;
+            Mid_S := Ada.Numerics.Elementary_Functions.Sin (Mid_Phase) * Clamp01 (Gain) * Envelope * Mid_Blend;
+            Sample_F32 := Fore_S + Mid_S;
+            Sample_F32 := Sample_F32 + Ambient_S;
+            if Sample_F32 > 1.0 then
+               Sample_F32 := 1.0;
+            elsif Sample_F32 < -1.0 then
+               Sample_F32 := -1.0;
+            end if;
+            Buffer (I) := Interfaces.C.C_float (Sample_F32);
+         end;
+      end loop;
 
-      --  Rate limit system sound launches to avoid process spam.
-      if Last_Native_Play_Ms > 0 and then Ts - Last_Native_Play_Ms < 110 then
-         return;
-      end if;
-
-      --  Avoid hammering the same motif repeatedly in very short windows.
-      if Motif = Last_Motif and then Last_Native_Play_Ms > 0 and then Ts - Last_Native_Play_Ms < 150 then
-         return;
-      end if;
-
-      Last_Native_Play_Ms := Ts;
-      Last_Motif := Motif;
-
-      if Volume < 0.20 then
-         Volume := 0.20;
-      elsif Volume > 0.95 then
-         Volume := 0.95;
-      end if;
-
-      Cmd :=
-        Interfaces.C.Strings.New_String
-          ("/bin/sh -c '/usr/bin/afplay -v "
-           & Trim (Float'Image (Volume), Both)
-           & " "
-           & Sound
-           & " >/dev/null 2>&1 &'");
-      Rc := C_System (Cmd);
+      Rc := beep_audio_stream_write (Buffer'Address, unsigned (Buffer'Length));
       pragma Unreferenced (Rc);
-      Interfaces.C.Strings.Free (Cmd);
-   end Emit_Darwin_Native;
+   end Emit_Stream;
+
+   procedure Emit_Ambient_Chunk
+     (Engine : in out Audio_Engine;
+      Ambient_Freq : Float;
+      Ambient_Gain : Float)
+   is
+      Duration_Ms : constant Positive := 44;
+      Frames      : constant Positive := Positive (Integer (Engine.Sample_Rate) * Duration_Ms / 1000);
+      type Sample_Buffer is array (Positive range <>) of aliased Interfaces.C.C_float;
+      Buffer      : Sample_Buffer (1 .. Frames);
+      Two_Pi      : constant Float := 2.0 * Ada.Numerics.Pi;
+      Rate_F      : constant Float := Float (Engine.Sample_Rate);
+      Phase_Step  : constant Float := Two_Pi * Ambient_Freq / Rate_F;
+      Rc          : int;
+   begin
+      for I in Buffer'Range loop
+         declare
+            S : Float := Ada.Numerics.Elementary_Functions.Sin (G_Ambient_Phase) * Ambient_Gain;
+         begin
+            G_Ambient_Phase := G_Ambient_Phase + Phase_Step;
+            if G_Ambient_Phase > Two_Pi then
+               G_Ambient_Phase := G_Ambient_Phase - Two_Pi;
+            end if;
+
+            if S > 1.0 then
+               S := 1.0;
+            elsif S < -1.0 then
+               S := -1.0;
+            end if;
+            Buffer (I) := Interfaces.C.C_float (S);
+         end;
+      end loop;
+
+      Rc := beep_audio_stream_write (Buffer'Address, unsigned (Buffer'Length));
+      pragma Unreferenced (Rc);
+   end Emit_Ambient_Chunk;
+
+   Queue : Beep.Audio.Runtime.Event_Queue;
+   Ambient : Beep.Audio.Runtime.Ambient_Control;
+
+   G_Backend     : Backend_Kind := Null_Backend;
+   G_Sample_Rate : unsigned := 44_100;
+   G_Active      : Boolean := False;
+
+   task type Audio_Player;
+
+   task body Audio_Player is
+      Item   : Queued_Event;
+      Shadow : Audio_Engine;
+      Ambient_Freq : Float := 0.0;
+      Ambient_Gain : Float := 0.0;
+      Ambient_Drive : Float := 0.32;
+      Ambient_Max   : Float := 0.30;
+      Ambient_Decay : Float := 0.992;
+      Mid_Min       : Float := 0.16;
+      Mid_Max       : Float := 0.52;
+      Fore_Attn     : Float := 0.55;
+   begin
+      loop
+         select
+            Queue.Pop (Item);
+            if not Item.Has_Value then
+               --  Queue wake-up (for shutdown/restart), continue waiting.
+               null;
+            elsif G_Active then
+               case G_Backend is
+                  when Null_Backend =>
+                     null;
+                  when Bell_Backend =>
+                     Emit_Bell (Item.Event.Gain);
+                  when Alsa_Backend =>
+                     Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+                     Ambient.Snapshot (Ambient_Freq, Ambient_Gain, Ambient_Decay);
+                     Shadow :=
+                       (Backend => G_Backend,
+                        Alsa_Handle => System.Null_Address,
+                        Sample_Rate => G_Sample_Rate,
+                        Active => G_Active);
+                     Emit_Stream (Shadow, Item.Event, Item.Event.Gain, Ambient_Freq, Ambient_Gain, Mid_Min, Mid_Max, Fore_Attn);
+               end case;
+            end if;
+
+         or
+            delay 0.05;
+            if G_Active and then G_Backend = Alsa_Backend then
+               Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+               Ambient.Snapshot (Ambient_Freq, Ambient_Gain, Ambient_Decay);
+               if Ambient_Gain > 0.003 then
+                  Shadow :=
+                    (Backend => G_Backend,
+                     Alsa_Handle => System.Null_Address,
+                     Sample_Rate => G_Sample_Rate,
+                     Active => G_Active);
+                  Emit_Ambient_Chunk (Shadow, Ambient_Freq, Ambient_Gain);
+               end if;
+            end if;
+         end select;
+      end loop;
+   end Audio_Player;
+
+   Player : Audio_Player;
 
    procedure Initialize (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config) is
       Requested : constant Backend_Kind := Backend_From_Config (Cfg);
       Raw       : constant String := Ada.Characters.Handling.To_Lower (To_String (Cfg.Audio_Backend));
+      Rc        : int := 0;
    begin
       Engine := (others => <>);
       Engine.Backend := Requested;
+      Queue.Start;
+      Mix.Set (Cfg.Audio_Mix);
+      G_Backend := Requested;
+      G_Sample_Rate := Engine.Sample_Rate;
+      G_Active := False;
+      G_Ambient_Phase := 0.0;
+      Ambient.Reset;
 
-      case Requested is
-         when Null_Backend =>
-            Engine.Active := True;
+      if Requested = Null_Backend then
+         Engine.Active := True;
+         G_Active := True;
+         return;
+      end if;
 
-         when Bell_Backend =>
-            Engine.Active := True;
-            if Raw /= "bell" then
-               Ada.Text_IO.Put_Line
-                 ("[warn] audio backend '" & Raw & "' is unavailable on this build; falling back to terminal bell backend");
-            end if;
+      if Requested = Bell_Backend then
+         Engine.Active := True;
+         G_Active := True;
+         return;
+      end if;
 
-         when Alsa_Backend =>
-            if Running_Darwin then
-               Engine.Active := True;
-            else
-               Engine.Backend := Bell_Backend;
-               Engine.Active := True;
-               Ada.Text_IO.Put_Line
-                 ("[warn] native macOS audio backend requested on non-macOS host; falling back to terminal bell backend");
-            end if;
-      end case;
+      Rc := beep_audio_stream_init (Engine.Sample_Rate);
+      if Rc = 0 then
+         Engine.Backend := Bell_Backend;
+         Engine.Active := True;
+         G_Backend := Bell_Backend;
+         G_Active := True;
+         Ada.Text_IO.Put_Line ("[warn] Darwin audio stream unavailable; falling back to terminal bell backend");
+         if Raw /= "bell" then
+            Ada.Text_IO.Put_Line ("[warn] requested backend '" & Raw & "' could not be started") ;
+         end if;
+         return;
+      end if;
+
+      Engine.Active := True;
+      G_Backend := Engine.Backend;
+      G_Active := True;
    end Initialize;
 
    procedure Reconfigure (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config) is
    begin
-      pragma Unreferenced (Engine, Cfg);
-      null;
+      if not Engine.Active then
+         return;
+      end if;
+      Mix.Set (Cfg.Audio_Mix);
    end Reconfigure;
 
    procedure Emit
@@ -167,38 +298,38 @@ package body Beep.Audio is
       Cfg    : Beep.Config.App_Config;
       Event  : Beep.Core.Types.Sound_Event)
    is
-      Gain : Float := Event.Gain;
+      Q : Sound_Event := Event;
+      Ambient_Drive : Float := 0.32;
+      Ambient_Max   : Float := 0.30;
+      Ambient_Decay : Float := 0.992;
+      Mid_Min       : Float := 0.16;
+      Mid_Max       : Float := 0.52;
+      Fore_Attn     : Float := 0.55;
    begin
-      pragma Unreferenced (Cfg);
-
       if not Engine.Active then
          return;
       end if;
 
-      if Gain < 0.0 then
-         Gain := 0.0;
-      elsif Gain > 1.0 then
-         Gain := 1.0;
+      Mix.Set (Cfg.Audio_Mix);
+      Q.Gain := Clamp01 (Event.Gain * Cfg.Master_Volume);
+      if Is_Ambient_Motif (Q.Motif) then
+         Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+         pragma Unreferenced (Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+         Ambient.Drive (Q.Motif, Q.Gain, Ambient_Drive, Ambient_Max);
       end if;
-
-      case Engine.Backend is
-         when Null_Backend =>
-            null;
-
-         when Bell_Backend =>
-            Emit_Bell (Gain);
-
-         when Alsa_Backend =>
-            if Running_Darwin then
-               Emit_Darwin_Native (Event.Motif, Gain);
-            else
-               Emit_Bell (Gain);
-            end if;
-      end case;
+      Queue.Push (Q);
    end Emit;
 
    procedure Shutdown (Engine : in out Audio_Engine) is
    begin
+      Queue.Stop;
+      G_Active := False;
+      beep_audio_stream_shutdown;
+
+      G_Backend := Null_Backend;
+      G_Ambient_Phase := 0.0;
+      Ambient.Reset;
+
       Engine := (others => <>);
    end Shutdown;
 
@@ -206,11 +337,7 @@ package body Beep.Audio is
    begin
       case Engine.Backend is
          when Null_Backend => return "null";
-         when Alsa_Backend =>
-            if Running_Darwin then
-               return "coreaudio";
-            end if;
-            return "native";
+         when Alsa_Backend => return "coreaudio";
          when Bell_Backend => return "bell";
       end case;
    end Backend_Name;

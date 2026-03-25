@@ -8,13 +8,26 @@ It currently combines:
 - Platform samplers via `Beep.Platform.Samplers`:
   - Linux: `/proc` CPU/system/network sources
   - macOS: `sysctl`/`ps`/`memory_pressure`/`netstat` sources plus `IOHIDSystem` idle-time input activity
-- Portable `bell`/`null` audio backends plus macOS native output via `afplay`
+- Portable `bell`/`null` audio backends plus macOS native streaming output via CoreAudio
 - Runtime tuning via config reload (`SIGHUP`)
 
-## Homebrew Install (macOS)
+## Monitored Signals by Platform
 
-*Note:* This doesn't really work yet. The macOS build will hopefully be working
-soon.
+| Feature   | Linux | macOS |
+|-----------|:-----:|:-----:|
+| Keyboard  | X     | X     |
+| Mouse     | X     | X     |
+| CPU       | X     | X     |
+| Process   | X     | X     |
+| Memory    | X     | X     |
+| System    | X     | X     |
+| Network   | X     | X     |
+
+Notes:
+- `Keyboard`/`Mouse` require interactive sampling enabled (`enable_x11=true`).
+- On Linux this uses X11 activity sources; on macOS it uses `IOHIDSystem` idle-time activity.
+
+## Homebrew Install (macOS)
 
 ```bash
 brew tap jamestomasino/beep
@@ -184,7 +197,7 @@ stats_interval_ms=1000
 debug_cpu=false
 debug_fake_input=false
 audio_backend=miniaudio
-# macOS native output options: coreaudio | native | afplay | miniaudio
+# macOS native streaming output options: coreaudio | native | miniaudio
 # macOS interactive input sampler (IOHIDSystem idle time):
 enable_x11=true
 master_volume=1.0

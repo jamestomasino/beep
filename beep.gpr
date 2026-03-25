@@ -1,6 +1,12 @@
 project Beep is
    type Build_OS_Type is ("linux", "darwin");
    Build_OS : Build_OS_Type := External ("BEEP_OS", "linux");
+   case Build_OS is
+      when "darwin" =>
+         for Languages use ("Ada", "C");
+      when "linux" =>
+         for Languages use ("Ada");
+   end case;
 
    case Build_OS is
       when "darwin" =>
@@ -32,7 +38,7 @@ project Beep is
    package Linker is
       case Build_OS is
          when "darwin" =>
-            for Switches ("Ada") use ();
+            for Switches ("Ada") use ("-framework", "AudioToolbox", "-framework", "CoreFoundation");
          when "linux" =>
             for Switches ("Ada") use ("-lX11", "-lasound");
       end case;
