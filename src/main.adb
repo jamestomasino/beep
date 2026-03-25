@@ -10,7 +10,7 @@ with Beep.Audio;
 with Beep.Config;
 with Beep.Core.Mapping;
 with Beep.Core.Types;
-with Beep.Linux.Samplers;
+with Beep.Platform.Samplers;
 with Beep.Runtime.Signals;
 
 procedure Main is
@@ -238,10 +238,10 @@ procedure Main is
    X11_Seen_Input : Boolean := False;
    X11_No_Input_Warned : Boolean := False;
    Startup_Ts : Milliseconds := 0;
-   Cpu_Sampler  : Beep.Linux.Samplers.Cpu_Sampler;
-   Sys_Sampler  : Beep.Linux.Samplers.System_Sampler;
-   Net_Sampler  : Beep.Linux.Samplers.Net_Sampler;
-   X11_Sampler  : Beep.Linux.Samplers.X11_Sampler;
+   Cpu_Sampler  : Beep.Platform.Samplers.Cpu_Sampler;
+   Sys_Sampler  : Beep.Platform.Samplers.System_Sampler;
+   Net_Sampler  : Beep.Platform.Samplers.Net_Sampler;
+   X11_Sampler  : Beep.Platform.Samplers.X11_Sampler;
    Audio_Engine : Beep.Audio.Audio_Engine;
 
    procedure Cleanup is
@@ -250,7 +250,7 @@ procedure Main is
          return;
       end if;
       Beep.Audio.Shutdown (Audio_Engine);
-      Beep.Linux.Samplers.Shutdown (X11_Sampler);
+      Beep.Platform.Samplers.Shutdown (X11_Sampler);
       Did_Cleanup := True;
    end Cleanup;
 
@@ -376,6 +376,16 @@ begin
 
    Reload_Config_From_Disk (Cfg, Is_Reload => False);
 
+   --  On macOS, enable interactive HID sampling by default for first-run users.
+   --  Respect explicit CLI/config choices by only applying when no config exists.
+   if Beep.Platform.Samplers.Is_Darwin
+     and then (not Cli_No_X11)
+     and then (not Ada.Directories.Exists (To_String (Config_Path)))
+     and then (not Cfg.Enable_X11)
+   then
+      Cfg.Enable_X11 := True;
+   end if;
+
    Log_Info ("profile=" & To_String (Cfg.Profile)
       & " config=" & To_String (Config_Path)
       & " audio=" & To_String (Cfg.Audio_Backend));
@@ -384,28 +394,34 @@ begin
       & " net=" & Boolean'Image (Cfg.Enable_Network)
       & " x11=" & Boolean'Image (Cfg.Enable_X11));
 
-   Beep.Linux.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler, X11_Sampler);
+   Beep.Platform.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler, X11_Sampler);
    Beep.Audio.Initialize (Audio_Engine, Cfg);
    Beep.Runtime.Signals.Install;
    Log_Info ("audio-backend=" & Beep.Audio.Backend_Name (Audio_Engine));
-   if Cfg.Enable_X11 and then not Beep.Linux.Samplers.X11_Active (X11_Sampler) then
-      Log_Warn ("X11 sampler unavailable (no display or X11 access)");
+   if Cfg.Enable_X11 and then not Beep.Platform.Samplers.X11_Active (X11_Sampler) then
+      Cfg.Enable_X11 := False;
+      if Beep.Platform.Samplers.Is_Darwin then
+         Log_Warn ("interactive HID sampler unavailable; disabling interactive input stream");
+      else
+         Log_Warn ("X11 sampler unavailable (no display or X11 access); disabling interactive input stream");
+      end if;
    end if;
    declare
       Session_Type    : constant String := Ada.Characters.Handling.To_Lower (Ada.Environment_Variables.Value ("XDG_SESSION_TYPE", ""));
       Wayland_Display : constant String := Ada.Environment_Variables.Value ("WAYLAND_DISPLAY", "");
    begin
-      Wayland_Session := Session_Type = "wayland" or else Wayland_Display /= "";
-      if Wayland_Session and then (not Cfg.Enable_X11 or else not Beep.Linux.Samplers.X11_Active (X11_Sampler)) then
+      Wayland_Session := Beep.Platform.Samplers.Is_Linux
+        and then (Session_Type = "wayland" or else Wayland_Display /= "");
+      if Wayland_Session and then (not Cfg.Enable_X11 or else not Beep.Platform.Samplers.X11_Active (X11_Sampler)) then
          Log_Warn ("Wayland session detected without active interactive input stream; activity feel may be less responsive");
       end if;
    end;
 
    Log_Info ("beep sampler loop started. Ctrl+C to stop.");
-   Startup_Ts := Beep.Linux.Samplers.Now_Ms;
+   Startup_Ts := Beep.Platform.Samplers.Now_Ms;
    while not Stop_Requested loop
       declare
-         Ts : constant Milliseconds := Beep.Linux.Samplers.Now_Ms;
+         Ts : constant Milliseconds := Beep.Platform.Samplers.Now_Ms;
          Reload_Now : Boolean := False;
          Stop_Now   : Boolean := False;
       begin
@@ -420,52 +436,52 @@ begin
 
          if Cfg.Enable_Cpu then
             declare
-                  Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
-                 Beep.Linux.Samplers.Poll_Cpu (Cpu_Sampler, Cfg.Engine, Cfg.Debug_Cpu, Ts);
+                  Sample : constant Beep.Platform.Samplers.Optional_Activity_Sample :=
+                 Beep.Platform.Samplers.Poll_Cpu (Cpu_Sampler, Cfg.Engine, Cfg.Debug_Cpu, Ts);
             begin
-               if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Value (Sample));
+               if Beep.Platform.Samplers.Has_Value (Sample) then
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Platform.Samplers.Value (Sample));
                end if;
             end;
          end if;
 
          if Cfg.Enable_System then
             declare
-               Batch : constant Beep.Linux.Samplers.Activity_Batch :=
-                 Beep.Linux.Samplers.Poll_System (Sys_Sampler, Ts);
+               Batch : constant Beep.Platform.Samplers.Activity_Batch :=
+                 Beep.Platform.Samplers.Poll_System (Sys_Sampler, Ts);
             begin
-               for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Item (Batch, I));
+               for I in 1 .. Beep.Platform.Samplers.Count (Batch) loop
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Platform.Samplers.Item (Batch, I));
                end loop;
             end;
          end if;
 
          if Cfg.Enable_Network then
             declare
-                  Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
-                 Beep.Linux.Samplers.Poll_Net (Net_Sampler, Ts);
+                  Sample : constant Beep.Platform.Samplers.Optional_Activity_Sample :=
+                 Beep.Platform.Samplers.Poll_Net (Net_Sampler, Ts);
             begin
-               if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Value (Sample));
+               if Beep.Platform.Samplers.Has_Value (Sample) then
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Platform.Samplers.Value (Sample));
                end if;
             end;
          end if;
 
          if Cfg.Enable_X11 then
             declare
-               Batch : constant Beep.Linux.Samplers.Activity_Batch :=
-                 Beep.Linux.Samplers.Poll_X11 (X11_Sampler, Ts);
+               Batch : constant Beep.Platform.Samplers.Activity_Batch :=
+                 Beep.Platform.Samplers.Poll_X11 (X11_Sampler, Ts);
             begin
-               for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
+               for I in 1 .. Beep.Platform.Samplers.Count (Batch) loop
                   X11_Seen_Input := True;
-                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Item (Batch, I));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Platform.Samplers.Item (Batch, I));
                end loop;
             end;
          end if;
 
          if Wayland_Session
            and then Cfg.Enable_X11
-           and then Beep.Linux.Samplers.X11_Active (X11_Sampler)
+           and then Beep.Platform.Samplers.X11_Active (X11_Sampler)
            and then not X11_Seen_Input
            and then not X11_No_Input_Warned
            and then Ts - Startup_Ts >= 15_000
