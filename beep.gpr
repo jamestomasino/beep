@@ -15,6 +15,12 @@ project Beep is
       for Switches ("Ada") use ("-E");
    end Binder;
 
+   package Builder is
+      for Executable ("beep_main.adb") use "beep";
+      for Executable ("beep_core_tests.adb") use "beep_core_tests";
+      for Executable ("beep_config_tests.adb") use "beep_config_tests";
+   end Builder;
+
    package Linker is
       for Switches ("Ada") use ("-Wl,-z,relro", "-Wl,-z,now", "-lX11", "-lasound");
    end Linker;
