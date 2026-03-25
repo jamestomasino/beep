@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y gnat gprbuild curl unzip
+          sudo apt-get install -y gnat gprbuild libx11-dev libasound2-dev curl unzip
 
       - name: Install Alire
         shell: bash
