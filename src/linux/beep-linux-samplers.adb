@@ -5,13 +5,42 @@ with Ada.Strings.Unbounded;
 with Ada.Strings.Unbounded.Text_IO;
 with Ada.Text_IO;
 with Interfaces;
+with Interfaces.C;
+with Interfaces.C.Strings;
+with System;
 
 package body Beep.Linux.Samplers is
    use Ada.Strings.Unbounded;
    use Beep.Core.Types;
    use Interfaces;
+   use Interfaces.C;
+   use type System.Address;
 
    Epoch : constant Ada.Calendar.Time := Ada.Calendar.Time_Of (1970, 1, 1, 0.0);
+
+   type X_Window is new unsigned_long;
+   subtype C_Int is Interfaces.C.int;
+   subtype C_UInt is Interfaces.C.unsigned;
+
+   function XOpenDisplay (Name : Interfaces.C.Strings.chars_ptr) return System.Address
+     with Import, Convention => C, External_Name => "XOpenDisplay";
+   function XCloseDisplay (Dpy : System.Address) return C_Int
+     with Import, Convention => C, External_Name => "XCloseDisplay";
+   function XDefaultRootWindow (Dpy : System.Address) return X_Window
+     with Import, Convention => C, External_Name => "XDefaultRootWindow";
+   function XQueryPointer
+     (Dpy          : System.Address;
+      W            : X_Window;
+      Root_Return  : access X_Window;
+      Child_Return : access X_Window;
+      Root_X       : access C_Int;
+      Root_Y       : access C_Int;
+      Win_X        : access C_Int;
+      Win_Y        : access C_Int;
+      Mask_Return  : access C_UInt) return C_Int
+     with Import, Convention => C, External_Name => "XQueryPointer";
+   function XQueryKeymap (Dpy : System.Address; Keys_Return : System.Address) return C_Int
+     with Import, Convention => C, External_Name => "XQueryKeymap";
 
    function Empty_Sample return Activity_Sample is
    begin
@@ -59,6 +88,26 @@ package body Beep.Linux.Samplers is
          return Value;
       end if;
    end Clamp01;
+
+   function Abs_I (Value : C_Int) return C_Int is
+   begin
+      if Value < 0 then
+         return -Value;
+      else
+         return Value;
+      end if;
+   end Abs_I;
+
+   function Popcount8 (Value : Unsigned_8) return Natural is
+      Count : Natural := 0;
+      V     : Unsigned_8 := Value;
+   begin
+      while V /= 0 loop
+         Count := Count + 1;
+         V := V and (V - 1);
+      end loop;
+      return Count;
+   end Popcount8;
 
    function Is_Space (C : Character) return Boolean is
    begin
@@ -344,14 +393,36 @@ package body Beep.Linux.Samplers is
 
    procedure Initialize
      (Cpu    : out Cpu_Sampler;
-      System : out System_Sampler;
-      Net    : out Net_Sampler)
+      Sys    : out System_Sampler;
+      Net    : out Net_Sampler;
+      X11    : out X11_Sampler)
    is
    begin
       Cpu := (others => <>);
-      System := (others => <>);
+      Sys := (others => <>);
       Net := (others => <>);
+
+      X11 := (others => <>);
+      X11.Display := XOpenDisplay (Interfaces.C.Strings.Null_Ptr);
+      if X11.Display /= System.Null_Address then
+         declare
+            Root : constant X_Window := XDefaultRootWindow (X11.Display);
+         begin
+            X11.Root := unsigned_long (Root);
+            X11.Is_Available := True;
+         end;
+      end if;
    end Initialize;
+
+   procedure Shutdown (Sampler : in out X11_Sampler) is
+      Ignore : C_Int;
+   begin
+      if Sampler.Display /= System.Null_Address then
+         Ignore := XCloseDisplay (Sampler.Display);
+         pragma Unreferenced (Ignore);
+      end if;
+      Sampler := (others => <>);
+   end Shutdown;
 
    function Poll_Cpu
      (Sampler   : in out Cpu_Sampler;
@@ -458,7 +529,7 @@ package body Beep.Linux.Samplers is
          if Intensity > 0.08 then
             Add_Sample
               (Batch,
-               (Kind => System, Intensity => Clamp01 (Intensity), Timestamp => Timestamp,
+               (Kind => Beep.Core.Types.System, Intensity => Clamp01 (Intensity), Timestamp => Timestamp,
                 Source => To_Unbounded_String ("linux.proc.ctxt"), Cpu_Bucket => Idle));
          end if;
       end if;
@@ -525,6 +596,89 @@ package body Beep.Linux.Samplers is
 
       return Make_Optional (Network, Intensity, Timestamp, "linux.proc.net", Idle);
    end Poll_Net;
+
+   function Poll_X11
+     (Sampler   : in out X11_Sampler;
+      Timestamp : Milliseconds) return Activity_Batch
+   is
+      Batch       : Activity_Batch := (N => 0, Item_1 => Empty_Sample, Item_2 => Empty_Sample, Item_3 => Empty_Sample);
+      Root_Ret    : aliased X_Window := 0;
+      Child_Ret   : aliased X_Window := 0;
+      Root_X      : aliased C_Int := 0;
+      Root_Y      : aliased C_Int := 0;
+      Win_X       : aliased C_Int := 0;
+      Win_Y       : aliased C_Int := 0;
+      Mask_Ret    : aliased C_UInt := 0;
+      Pointer_Ok  : C_Int;
+      Current_Map : Keymap_Bits := (others => 0);
+      Keys_Ok     : C_Int;
+      Delta_Mouse : C_Int := 0;
+      Key_Changes : Natural := 0;
+   begin
+      if not Sampler.Is_Available or else Sampler.Display = System.Null_Address then
+         return Batch;
+      end if;
+
+      Pointer_Ok :=
+        XQueryPointer
+          (Sampler.Display,
+           X_Window (Sampler.Root),
+           Root_Ret'Access,
+           Child_Ret'Access,
+           Root_X'Access,
+           Root_Y'Access,
+           Win_X'Access,
+           Win_Y'Access,
+           Mask_Ret'Access);
+      Keys_Ok := XQueryKeymap (Sampler.Display, Current_Map'Address);
+      if Pointer_Ok = 0 or else Keys_Ok = 0 then
+         Sampler.Is_Available := False;
+         return Batch;
+      end if;
+
+      if not Sampler.Primed then
+         Sampler.Prev_Root_X := Root_X;
+         Sampler.Prev_Root_Y := Root_Y;
+         Sampler.Prev_Keymap := Current_Map;
+         Sampler.Primed := True;
+         return Batch;
+      end if;
+
+      Delta_Mouse := Abs_I (Root_X - Sampler.Prev_Root_X) + Abs_I (Root_Y - Sampler.Prev_Root_Y);
+      if Delta_Mouse > 0 then
+         Add_Sample
+           (Batch,
+            (Kind => Mouse,
+             Intensity => Clamp01 (Float (Delta_Mouse) / 160.0),
+             Timestamp => Timestamp,
+             Source => To_Unbounded_String ("linux.x11.pointer.move"),
+             Cpu_Bucket => Idle));
+      end if;
+
+      for I in Current_Map'Range loop
+         Key_Changes := Key_Changes + Popcount8 (Current_Map (I) xor Sampler.Prev_Keymap (I));
+      end loop;
+
+      if Key_Changes > 0 then
+         Add_Sample
+           (Batch,
+            (Kind => Keyboard,
+             Intensity => Clamp01 (Float (Key_Changes) / 6.0),
+             Timestamp => Timestamp,
+             Source => To_Unbounded_String ("linux.x11.keyboard"),
+             Cpu_Bucket => Idle));
+      end if;
+
+      Sampler.Prev_Root_X := Root_X;
+      Sampler.Prev_Root_Y := Root_Y;
+      Sampler.Prev_Keymap := Current_Map;
+      return Batch;
+   end Poll_X11;
+
+   function X11_Active (Sampler : X11_Sampler) return Boolean is
+   begin
+      return Sampler.Is_Available;
+   end X11_Active;
 
    function Has_Value (Sample : Optional_Activity_Sample) return Boolean is
    begin

@@ -3,6 +3,7 @@ with Ada.Directories;
 with Ada.Exceptions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Beep.Audio;
 with Beep.Config;
 with Beep.Core.Mapping;
 with Beep.Core.Types;
@@ -45,27 +46,33 @@ procedure Beep_Main is
       Put_Line ("  --no-cpu");
       Put_Line ("  --no-system");
       Put_Line ("  --no-net");
+      Put_Line ("  --no-x11");
       Put_Line ("  --debug-events");
       Put_Line ("  --debug-cpu");
       Put_Line ("  --debug-fake-input");
       Put_Line ("  --audio-null");
+      Put_Line ("  --audio-bell");
       Put_Line ("  --help");
    end Print_Usage;
 
    procedure Handle_Sample
      (State  : in out Engine_State;
+      Audio  : in out Beep.Audio.Audio_Engine;
       Cfg    : Beep.Config.App_Config;
       Sample : Activity_Sample)
    is
       Event : Optional_Sound_Event := Beep.Core.Mapping.Map_Activity (State, Cfg.Engine, Sample);
    begin
-      if Event.Has_Value and then Cfg.Log_Events then
-         Ada.Text_IO.Put_Line
-           ("[" & Long_Long_Integer'Image (Event.Value.Timestamp) & "] "
-            & Beep.Core.Types.Motif_Image (Event.Value.Motif)
-            & " gain=" & Float'Image (Event.Value.Gain)
-            & " duration=" & Integer'Image (Event.Value.Duration_Ms)
-            & "ms");
+      if Event.Has_Value then
+         Beep.Audio.Emit (Audio, Cfg, Event.Value);
+         if Cfg.Log_Events then
+            Ada.Text_IO.Put_Line
+              ("[" & Long_Long_Integer'Image (Event.Value.Timestamp) & "] "
+               & Beep.Core.Types.Motif_Image (Event.Value.Motif)
+               & " gain=" & Float'Image (Event.Value.Gain)
+               & " duration=" & Integer'Image (Event.Value.Duration_Ms)
+               & "ms");
+         end if;
       end if;
    end Handle_Sample;
 
@@ -75,15 +82,19 @@ procedure Beep_Main is
    Cli_No_Cpu       : Boolean := False;
    Cli_No_System    : Boolean := False;
    Cli_No_Net       : Boolean := False;
+   Cli_No_X11       : Boolean := False;
    Cli_Debug_Events : Boolean := False;
    Cli_Debug_Cpu    : Boolean := False;
    Cli_Debug_Fake   : Boolean := False;
    Cli_Audio_Null   : Boolean := False;
+   Cli_Audio_Bell   : Boolean := False;
 
    Mapper_State : Engine_State := New_State;
    Cpu_Sampler  : Beep.Linux.Samplers.Cpu_Sampler;
    Sys_Sampler  : Beep.Linux.Samplers.System_Sampler;
    Net_Sampler  : Beep.Linux.Samplers.Net_Sampler;
+   X11_Sampler  : Beep.Linux.Samplers.X11_Sampler;
+   Audio_Engine : Beep.Audio.Audio_Engine;
 
 begin
    if Has_Flag ("--help") or else Has_Flag ("-h") then
@@ -108,10 +119,12 @@ begin
          if Arg = "--no-cpu" then Cli_No_Cpu := True; end if;
          if Arg = "--no-system" then Cli_No_System := True; end if;
          if Arg = "--no-net" then Cli_No_Net := True; end if;
+         if Arg = "--no-x11" then Cli_No_X11 := True; end if;
          if Arg = "--debug-events" then Cli_Debug_Events := True; end if;
          if Arg = "--debug-cpu" then Cli_Debug_Cpu := True; end if;
          if Arg = "--debug-fake-input" then Cli_Debug_Fake := True; end if;
          if Arg = "--audio-null" then Cli_Audio_Null := True; end if;
+         if Arg = "--audio-bell" then Cli_Audio_Bell := True; end if;
       end;
    end loop;
 
@@ -131,19 +144,27 @@ begin
    if Cli_No_Cpu then Cfg.Enable_Cpu := False; end if;
    if Cli_No_System then Cfg.Enable_System := False; end if;
    if Cli_No_Net then Cfg.Enable_Network := False; end if;
+   if Cli_No_X11 then Cfg.Enable_X11 := False; end if;
    if Cli_Debug_Events then Cfg.Log_Events := True; end if;
    if Cli_Debug_Cpu then Cfg.Debug_Cpu := True; end if;
    if Cli_Debug_Fake then Cfg.Debug_Fake_Input := True; end if;
    if Cli_Audio_Null then Cfg.Audio_Backend := To_Unbounded_String ("null"); end if;
+   if Cli_Audio_Bell then Cfg.Audio_Backend := To_Unbounded_String ("bell"); end if;
 
    Ada.Text_IO.Put_Line ("profile=" & To_String (Cfg.Profile)
       & " config=" & To_String (Config_Path)
       & " audio=" & To_String (Cfg.Audio_Backend));
    Ada.Text_IO.Put_Line ("sources: cpu=" & Boolean'Image (Cfg.Enable_Cpu)
       & " system=" & Boolean'Image (Cfg.Enable_System)
-      & " net=" & Boolean'Image (Cfg.Enable_Network));
+      & " net=" & Boolean'Image (Cfg.Enable_Network)
+      & " x11=" & Boolean'Image (Cfg.Enable_X11));
 
-   Beep.Linux.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler);
+   Beep.Linux.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler, X11_Sampler);
+   Beep.Audio.Initialize (Audio_Engine, Cfg);
+   Ada.Text_IO.Put_Line ("audio-backend=" & Beep.Audio.Backend_Name (Audio_Engine));
+   if Cfg.Enable_X11 and then not Beep.Linux.Samplers.X11_Active (X11_Sampler) then
+      Ada.Text_IO.Put_Line ("[warn] X11 sampler unavailable (no display or X11 access)");
+   end if;
 
    Ada.Text_IO.Put_Line ("beep sampler loop started. Ctrl+C to stop.");
    loop
@@ -152,11 +173,11 @@ begin
       begin
          if Cfg.Enable_Cpu then
             declare
-               Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
+                  Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
                  Beep.Linux.Samplers.Poll_Cpu (Cpu_Sampler, Cfg.Engine, Cfg.Debug_Cpu, Ts);
             begin
                if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Cfg, Beep.Linux.Samplers.Value (Sample));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Value (Sample));
                end if;
             end;
          end if;
@@ -167,19 +188,30 @@ begin
                  Beep.Linux.Samplers.Poll_System (Sys_Sampler, Ts);
             begin
                for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
-                  Handle_Sample (Mapper_State, Cfg, Beep.Linux.Samplers.Item (Batch, I));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Item (Batch, I));
                end loop;
             end;
          end if;
 
          if Cfg.Enable_Network then
             declare
-               Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
+                  Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
                  Beep.Linux.Samplers.Poll_Net (Net_Sampler, Ts);
             begin
                if Beep.Linux.Samplers.Has_Value (Sample) then
-                  Handle_Sample (Mapper_State, Cfg, Beep.Linux.Samplers.Value (Sample));
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Value (Sample));
                end if;
+            end;
+         end if;
+
+         if Cfg.Enable_X11 then
+            declare
+               Batch : constant Beep.Linux.Samplers.Activity_Batch :=
+                 Beep.Linux.Samplers.Poll_X11 (X11_Sampler, Ts);
+            begin
+               for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
+                  Handle_Sample (Mapper_State, Audio_Engine, Cfg, Beep.Linux.Samplers.Item (Batch, I));
+               end loop;
             end;
          end if;
       end;

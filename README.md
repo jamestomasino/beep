@@ -15,6 +15,7 @@ alr build
 ```bash
 ./obj/beep_main --help
 ./obj/beep_main --profile=noisy --no-cpu --audio-null
+./obj/beep_main --debug-events --audio-bell
 ```
 
 ## Tests
@@ -27,5 +28,8 @@ alr build
 ## Notes
 
 - System/tool dependencies are declared in `alire.toml`.
-- Current implementation includes Ada core mapping and config parsing with tests.
-- Linux sampler and audio backend ports are next migration steps.
+- Current implementation includes:
+  - Ada core mapping/config with tests
+  - Linux `/proc` samplers (cpu/system/net)
+  - X11 activity sampler (keyboard/mouse movement)
+  - Native audio output via ALSA, with terminal bell fallback

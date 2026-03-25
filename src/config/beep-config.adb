@@ -259,6 +259,12 @@ package body Beep.Config is
             Cfg.Enable_Network := B;
          end if;
 
+      elsif K = "enable_x11" then
+         B := Parse_Bool (V, Ok_Bool);
+         if Ok_Bool then
+            Cfg.Enable_X11 := B;
+         end if;
+
       elsif K = "log_events" then
          B := Parse_Bool (V, Ok_Bool);
          if Ok_Bool then

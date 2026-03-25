@@ -28,6 +28,7 @@ package Beep.Config is
       Enable_Cpu       : Boolean := True;
       Enable_System    : Boolean := True;
       Enable_Network   : Boolean := True;
+      Enable_X11       : Boolean := True;
       Log_Events       : Boolean := False;
       Debug_Cpu        : Boolean := False;
       Debug_Fake_Input : Boolean := False;

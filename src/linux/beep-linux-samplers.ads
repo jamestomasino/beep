@@ -1,18 +1,24 @@
 with Beep.Core.Types;
 with Interfaces;
+with Interfaces.C;
+with System;
 
 package Beep.Linux.Samplers is
    type Cpu_Sampler is private;
    type System_Sampler is private;
    type Net_Sampler is private;
+   type X11_Sampler is private;
 
    type Optional_Activity_Sample is private;
    type Activity_Batch is private;
 
    procedure Initialize
      (Cpu    : out Cpu_Sampler;
-      System : out System_Sampler;
-      Net    : out Net_Sampler);
+      Sys    : out System_Sampler;
+      Net    : out Net_Sampler;
+      X11    : out X11_Sampler);
+
+   procedure Shutdown (Sampler : in out X11_Sampler);
 
    function Poll_Cpu
      (Sampler   : in out Cpu_Sampler;
@@ -27,6 +33,12 @@ package Beep.Linux.Samplers is
    function Poll_Net
      (Sampler   : in out Net_Sampler;
       Timestamp : Beep.Core.Types.Milliseconds) return Optional_Activity_Sample;
+
+   function Poll_X11
+     (Sampler   : in out X11_Sampler;
+      Timestamp : Beep.Core.Types.Milliseconds) return Activity_Batch;
+
+   function X11_Active (Sampler : X11_Sampler) return Boolean;
 
    function Has_Value (Sample : Optional_Activity_Sample) return Boolean;
    function Value (Sample : Optional_Activity_Sample) return Beep.Core.Types.Activity_Sample;
@@ -65,6 +77,18 @@ private
    type Net_Sampler is record
       Prev   : Net_Snapshot;
       Primed : Boolean := False;
+   end record;
+
+   type Keymap_Bits is array (Natural range 0 .. 31) of Interfaces.Unsigned_8;
+
+   type X11_Sampler is record
+      Display      : System.Address := System.Null_Address;
+      Root         : Interfaces.C.unsigned_long := 0;
+      Prev_Root_X  : Interfaces.C.int := 0;
+      Prev_Root_Y  : Interfaces.C.int := 0;
+      Prev_Keymap  : Keymap_Bits := (others => 0);
+      Primed       : Boolean := False;
+      Is_Available : Boolean := False;
    end record;
 
    type Optional_Activity_Sample is record
