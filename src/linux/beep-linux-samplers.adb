@@ -288,10 +288,137 @@ package body Beep.Linux.Samplers is
          return False;
    end Read_Mem_Ratio;
 
+   function Is_Ignored_Block_Device (Name : String) return Boolean is
+   begin
+      return Starts_With (Name, "loop")
+        or else Starts_With (Name, "ram")
+        or else Starts_With (Name, "fd")
+        or else Starts_With (Name, "sr")
+        or else Starts_With (Name, "dm-")
+        or else Starts_With (Name, "md")
+        or else Starts_With (Name, "zram");
+   end Is_Ignored_Block_Device;
+
+   function Read_Loadavg (Load1 : out Float) return Boolean is
+      File   : Ada.Text_IO.File_Type;
+      Line_U : Unbounded_String;
+      Ok     : Boolean;
+   begin
+      Ada.Text_IO.Open (File, Ada.Text_IO.In_File, "/proc/loadavg");
+      if Ada.Text_IO.End_Of_File (File) then
+         Ada.Text_IO.Close (File);
+         return False;
+      end if;
+
+      Ada.Strings.Unbounded.Text_IO.Get_Line (File, Line_U);
+      Ada.Text_IO.Close (File);
+      Load1 := To_Float (Nth_Field (To_String (Line_U), 1), Ok);
+      return Ok;
+   exception
+      when others =>
+         if Ada.Text_IO.Is_Open (File) then
+            Ada.Text_IO.Close (File);
+         end if;
+         return False;
+   end Read_Loadavg;
+
+   function Read_Disk_Sectors (Total_Sectors : out Unsigned_64) return Boolean is
+      File      : Ada.Text_IO.File_Type;
+      Line_U    : Unbounded_String;
+      Sum       : Unsigned_64 := 0;
+      Ok        : Boolean;
+      Read_Sec  : Unsigned_64;
+      Write_Sec : Unsigned_64;
+   begin
+      Ada.Text_IO.Open (File, Ada.Text_IO.In_File, "/proc/diskstats");
+      while not Ada.Text_IO.End_Of_File (File) loop
+         Ada.Strings.Unbounded.Text_IO.Get_Line (File, Line_U);
+         declare
+            Line  : constant String := Ada.Strings.Fixed.Trim (To_String (Line_U), Ada.Strings.Both);
+            Dev   : constant String := Nth_Field (Line, 3);
+            F6    : constant String := Nth_Field (Line, 6);
+            F10   : constant String := Nth_Field (Line, 10);
+         begin
+            if Dev /= ""
+              and then not Is_Ignored_Block_Device (Dev)
+              and then F6 /= ""
+              and then F10 /= ""
+            then
+               Read_Sec := To_U64 (F6, Ok);
+               if Ok then
+                  Write_Sec := To_U64 (F10, Ok);
+                  if Ok then
+                     Sum := Sum + Read_Sec + Write_Sec;
+                  end if;
+               end if;
+            end if;
+         end;
+      end loop;
+      Ada.Text_IO.Close (File);
+      Total_Sectors := Sum;
+      return True;
+   exception
+      when others =>
+         if Ada.Text_IO.Is_Open (File) then
+            Ada.Text_IO.Close (File);
+         end if;
+         return False;
+   end Read_Disk_Sectors;
+
+   function Read_Psi_Avg10 (Path : String; Value : out Float) return Boolean is
+      File   : Ada.Text_IO.File_Type;
+      Line_U : Unbounded_String;
+      Pos    : Natural;
+      Stop   : Natural;
+      Ok     : Boolean := False;
+   begin
+      Value := 0.0;
+      Ada.Text_IO.Open (File, Ada.Text_IO.In_File, Path);
+      while not Ada.Text_IO.End_Of_File (File) loop
+         Ada.Strings.Unbounded.Text_IO.Get_Line (File, Line_U);
+         declare
+            Line : constant String := To_String (Line_U);
+         begin
+            if Starts_With (Line, "some ") then
+               Pos := Ada.Strings.Fixed.Index (Line, "avg10=");
+               if Pos > 0 then
+                  Stop := Pos + 6;
+                  while Stop <= Line'Last and then Line (Stop) /= ' ' loop
+                     Stop := Stop + 1;
+                  end loop;
+
+                  if Stop > Pos + 6 then
+                     Value := To_Float (Line (Pos + 6 .. Stop - 1), Ok);
+                     Ada.Text_IO.Close (File);
+                     if Ok then
+                        Value := Clamp01 (Value / 100.0);
+                     end if;
+                     return Ok;
+                  end if;
+               end if;
+            end if;
+         end;
+      end loop;
+      Ada.Text_IO.Close (File);
+      return False;
+   exception
+      when others =>
+         if Ada.Text_IO.Is_Open (File) then
+            Ada.Text_IO.Close (File);
+         end if;
+         return False;
+   end Read_Psi_Avg10;
+
    function Read_System_Snapshot (Snap : out System_Snapshot) return Boolean is
-      Procs : Unsigned_64;
-      Ctxt  : Unsigned_64;
-      Mem   : Float;
+      Procs   : Unsigned_64;
+      Ctxt    : Unsigned_64;
+      Mem     : Float;
+      Load1   : Float := 0.0;
+      Disk    : Unsigned_64 := 0;
+      Psi_Cpu : Float := 0.0;
+      Psi_Mem : Float := 0.0;
+      Psi_Io  : Float := 0.0;
+      Ignore  : Boolean;
    begin
       if not Read_Stat_Counter ("processes", Procs) then
          return False;
@@ -303,10 +430,22 @@ package body Beep.Linux.Samplers is
          return False;
       end if;
 
+      Ignore := Read_Loadavg (Load1);
+      Ignore := Read_Disk_Sectors (Disk) or else Ignore;
+      Ignore := Read_Psi_Avg10 ("/proc/pressure/cpu", Psi_Cpu) or else Ignore;
+      Ignore := Read_Psi_Avg10 ("/proc/pressure/memory", Psi_Mem) or else Ignore;
+      Ignore := Read_Psi_Avg10 ("/proc/pressure/io", Psi_Io) or else Ignore;
+      pragma Unreferenced (Ignore);
+
       Snap := (
          Processes_Total => Procs,
          Ctxt_Total      => Ctxt,
-         Mem_Used_Ratio  => Mem
+         Mem_Used_Ratio  => Mem,
+         Loadavg_1       => Load1,
+         Disk_Sectors    => Disk,
+         Psi_Cpu_Avg10   => Psi_Cpu,
+         Psi_Mem_Avg10   => Psi_Mem,
+         Psi_Io_Avg10    => Psi_Io
       );
       return True;
    end Read_System_Snapshot;
@@ -380,12 +519,15 @@ package body Beep.Linux.Samplers is
 
    procedure Add_Sample (Batch : in out Activity_Batch; Sample : Activity_Sample) is
    begin
-      if Batch.N < 3 then
+      if Batch.N < 6 then
          Batch.N := Batch.N + 1;
          case Batch.N is
             when 1 => Batch.Item_1 := Sample;
             when 2 => Batch.Item_2 := Sample;
             when 3 => Batch.Item_3 := Sample;
+            when 4 => Batch.Item_4 := Sample;
+            when 5 => Batch.Item_5 := Sample;
+            when 6 => Batch.Item_6 := Sample;
             when others => null;
          end case;
       end if;
@@ -487,12 +629,16 @@ package body Beep.Linux.Samplers is
      (Sampler   : in out System_Sampler;
       Timestamp : Milliseconds) return Activity_Batch
    is
-      Batch      : Activity_Batch := (N => 0, Item_1 => Empty_Sample, Item_2 => Empty_Sample, Item_3 => Empty_Sample);
-      Next       : System_Snapshot;
-      Proc_Delta : Unsigned_64;
-      Ctxt_Delta : Unsigned_64;
-      Mem_Delta  : Float;
-      Intensity  : Float;
+      Batch        : Activity_Batch := (N => 0, Item_1 => Empty_Sample, Item_2 => Empty_Sample, Item_3 => Empty_Sample, Item_4 => Empty_Sample, Item_5 => Empty_Sample, Item_6 => Empty_Sample);
+      Next         : System_Snapshot;
+      Proc_Delta   : Unsigned_64;
+      Ctxt_Delta   : Unsigned_64;
+      Mem_Delta    : Float;
+      Intensity    : Float;
+      Dt_Ms        : Milliseconds;
+      Disk_Delta   : Unsigned_64;
+      Disk_Bps     : Float;
+      Psi_Combined : Float;
    begin
       if not Read_System_Snapshot (Next) then
          return Batch;
@@ -500,8 +646,14 @@ package body Beep.Linux.Samplers is
 
       if not Sampler.Primed then
          Sampler.Prev := Next;
+         Sampler.Prev_Timestamp := Timestamp;
          Sampler.Primed := True;
          return Batch;
+      end if;
+
+      Dt_Ms := Timestamp - Sampler.Prev_Timestamp;
+      if Dt_Ms < 1 then
+         Dt_Ms := 1;
       end if;
 
       if Next.Processes_Total >= Sampler.Prev.Processes_Total then
@@ -547,7 +699,41 @@ package body Beep.Linux.Samplers is
              Source => To_Unbounded_String ("linux.proc.mem"), Cpu_Bucket => Idle));
       end if;
 
+      Intensity := Clamp01 (Next.Loadavg_1 / 4.0);
+      if Intensity > 0.10 then
+         Add_Sample
+           (Batch,
+            (Kind => Beep.Core.Types.System, Intensity => Intensity, Timestamp => Timestamp,
+             Source => To_Unbounded_String ("linux.proc.loadavg"), Cpu_Bucket => Idle));
+      end if;
+
+      if Next.Disk_Sectors >= Sampler.Prev.Disk_Sectors then
+         Disk_Delta := Next.Disk_Sectors - Sampler.Prev.Disk_Sectors;
+      else
+         Disk_Delta := 0;
+      end if;
+      if Disk_Delta > 0 then
+         Disk_Bps := (Float (Disk_Delta) * 512.0) * (1000.0 / Float (Dt_Ms));
+         Intensity := Clamp01 (Disk_Bps / 3_145_728.0);
+         if Intensity > 0.03 then
+            Add_Sample
+              (Batch,
+               (Kind => Beep.Core.Types.System, Intensity => Intensity, Timestamp => Timestamp,
+                Source => To_Unbounded_String ("linux.proc.disk"), Cpu_Bucket => Idle));
+         end if;
+      end if;
+
+      Psi_Combined := Float'Max (Next.Psi_Cpu_Avg10 * 0.9, Float'Max (Next.Psi_Io_Avg10 * 1.3, Next.Psi_Mem_Avg10 * 1.6));
+      Psi_Combined := Clamp01 (Psi_Combined);
+      if Psi_Combined > 0.02 then
+         Add_Sample
+           (Batch,
+            (Kind => Beep.Core.Types.System, Intensity => Psi_Combined, Timestamp => Timestamp,
+             Source => To_Unbounded_String ("linux.proc.psi"), Cpu_Bucket => Idle));
+      end if;
+
       Sampler.Prev := Next;
+      Sampler.Prev_Timestamp := Timestamp;
       return Batch;
    end Poll_System;
 
@@ -601,7 +787,7 @@ package body Beep.Linux.Samplers is
      (Sampler   : in out X11_Sampler;
       Timestamp : Milliseconds) return Activity_Batch
    is
-      Batch       : Activity_Batch := (N => 0, Item_1 => Empty_Sample, Item_2 => Empty_Sample, Item_3 => Empty_Sample);
+      Batch       : Activity_Batch := (N => 0, Item_1 => Empty_Sample, Item_2 => Empty_Sample, Item_3 => Empty_Sample, Item_4 => Empty_Sample, Item_5 => Empty_Sample, Item_6 => Empty_Sample);
       Root_Ret    : aliased X_Window := 0;
       Child_Ret   : aliased X_Window := 0;
       Root_X      : aliased C_Int := 0;
@@ -720,6 +906,9 @@ package body Beep.Linux.Samplers is
          when 1 => return Batch.Item_1;
          when 2 => return Batch.Item_2;
          when 3 => return Batch.Item_3;
+         when 4 => return Batch.Item_4;
+         when 5 => return Batch.Item_5;
+         when 6 => return Batch.Item_6;
          when others => return Empty_Sample;
       end case;
    end Item;

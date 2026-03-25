@@ -62,11 +62,17 @@ private
       Processes_Total : Unsigned_64 := 0;
       Ctxt_Total      : Unsigned_64 := 0;
       Mem_Used_Ratio  : Float := 0.0;
+      Loadavg_1       : Float := 0.0;
+      Disk_Sectors    : Unsigned_64 := 0;
+      Psi_Cpu_Avg10   : Float := 0.0;
+      Psi_Mem_Avg10   : Float := 0.0;
+      Psi_Io_Avg10    : Float := 0.0;
    end record;
 
    type System_Sampler is record
-      Prev   : System_Snapshot;
-      Primed : Boolean := False;
+      Prev           : System_Snapshot;
+      Prev_Timestamp : Milliseconds := 0;
+      Primed         : Boolean := False;
    end record;
 
    type Net_Snapshot is record
@@ -98,9 +104,12 @@ private
    end record;
 
    type Activity_Batch is record
-      N      : Natural range 0 .. 3 := 0;
+      N      : Natural range 0 .. 6 := 0;
       Item_1 : Activity_Sample;
       Item_2 : Activity_Sample;
       Item_3 : Activity_Sample;
+      Item_4 : Activity_Sample;
+      Item_5 : Activity_Sample;
+      Item_6 : Activity_Sample;
    end record;
 end Beep.Linux.Samplers;

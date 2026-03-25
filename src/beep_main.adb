@@ -150,6 +150,7 @@ begin
    if Cli_Debug_Fake then Cfg.Debug_Fake_Input := True; end if;
    if Cli_Audio_Null then Cfg.Audio_Backend := To_Unbounded_String ("null"); end if;
    if Cli_Audio_Bell then Cfg.Audio_Backend := To_Unbounded_String ("bell"); end if;
+   Cfg.Engine.Ambient_Level := Cfg.Ambient_Level;
    Cfg.Engine.Burst_Density := Cfg.Burst_Density;
 
    Ada.Text_IO.Put_Line ("profile=" & To_String (Cfg.Profile)

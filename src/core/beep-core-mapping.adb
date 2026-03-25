@@ -119,6 +119,7 @@ package body Beep.Core.Mapping is
       Alpha           : Float;
       Density         : Float;
       Burst           : Float;
+      Ambient         : Float;
       Motif           : Motif_Type := Bip;
       Reason          : Unbounded_String := Null_Unbounded_String;
       Gain            : Float := Sample.Intensity;
@@ -131,6 +132,7 @@ package body Beep.Core.Mapping is
       Min_Scale       : Float;
       Random_Chance   : Float;
       Density_Scale   : Float;
+      Ambient_Scale   : Float;
       Options         : Motif_Vectors.Vector;
       Intensity_Clamp : Float := Clamp01 (Sample.Intensity);
    begin
@@ -149,7 +151,9 @@ package body Beep.Core.Mapping is
       State.Activity_Ema := State.Activity_Ema * (1.0 - Alpha) + Intensity_Clamp * Alpha;
       Density := Clamp01 (Float'Max (Sample.Intensity, State.Activity_Ema));
       Burst := Clamp01 (Cfg.Burst_Density);
-      Density_Scale := 0.40 + Burst * 1.10;
+      Ambient := Clamp01 (Cfg.Ambient_Level);
+      Ambient_Scale := 0.55 + Ambient * 0.90;
+      Density_Scale := (0.40 + Burst * 1.10) * Ambient_Scale;
 
       case Sample.Kind is
          when Keyboard =>
@@ -221,7 +225,7 @@ package body Beep.Core.Mapping is
 
             case Sample.Cpu_Bucket is
                when Idle =>
-                  if Rand01 (State) > Clamp01 (Cfg.Hum_Base_Chance * 0.60) then
+                  if Rand01 (State) > Clamp01 (Cfg.Hum_Base_Chance * (0.45 + Ambient * 0.45)) then
                      return (Has_Value => False, others => <>);
                   end if;
                   Options.Append (Drone);
@@ -361,7 +365,7 @@ package body Beep.Core.Mapping is
       Drop_Chance := Clamp01 ((0.40 - Density * 0.25) / Density_Scale);
 
       if Motif = Hum or else Motif = Drone or else Motif = Wobble or else Motif = Pad then
-         Drop_Chance := Clamp01 (0.22 - Density * 0.10);
+         Drop_Chance := Clamp01 ((0.22 - Density * 0.10) / Density_Scale);
       elsif Motif = Tick or else Motif = Tsk then
          Drop_Chance := Clamp01 (Drop_Chance - 0.18);
       elsif Motif = Cluster then
@@ -431,6 +435,8 @@ package body Beep.Core.Mapping is
       if Duration < 16 then
          Duration := 16;
       end if;
+
+      Gain := Gain * (0.70 + Ambient * 0.45);
 
       State.Last_Emit_Ms := Now_Ms;
       State.Last_Motif := Motif;
