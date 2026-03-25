@@ -210,6 +210,10 @@ procedure Beep_Main is
    Last_By_Kind : Kind_Timestamps := (others => 0);
    Event_Counts : Kind_Counts := (others => 0);
    Stats_Window_Start : Milliseconds := 0;
+   Wayland_Session : Boolean := False;
+   X11_Seen_Input : Boolean := False;
+   X11_No_Input_Warned : Boolean := False;
+   Startup_Ts : Milliseconds := 0;
    Cpu_Sampler  : Beep.Linux.Samplers.Cpu_Sampler;
    Sys_Sampler  : Beep.Linux.Samplers.System_Sampler;
    Net_Sampler  : Beep.Linux.Samplers.Net_Sampler;
@@ -292,15 +296,16 @@ begin
    declare
       Session_Type    : constant String := Ada.Characters.Handling.To_Lower (Ada.Environment_Variables.Value ("XDG_SESSION_TYPE", ""));
       Wayland_Display : constant String := Ada.Environment_Variables.Value ("WAYLAND_DISPLAY", "");
-      Is_Wayland      : constant Boolean := Session_Type = "wayland" or else Wayland_Display /= "";
    begin
-      if Is_Wayland and then (not Cfg.Enable_X11 or else not Beep.Linux.Samplers.X11_Active (X11_Sampler)) then
+      Wayland_Session := Session_Type = "wayland" or else Wayland_Display /= "";
+      if Wayland_Session and then (not Cfg.Enable_X11 or else not Beep.Linux.Samplers.X11_Active (X11_Sampler)) then
          Ada.Text_IO.Put_Line
            ("[warn] Wayland session detected without active interactive input stream; activity feel may be less responsive");
       end if;
    end;
 
    Ada.Text_IO.Put_Line ("beep sampler loop started. Ctrl+C to stop.");
+   Startup_Ts := Beep.Linux.Samplers.Now_Ms;
    loop
       declare
          Ts : constant Milliseconds := Beep.Linux.Samplers.Now_Ms;
@@ -344,9 +349,22 @@ begin
                  Beep.Linux.Samplers.Poll_X11 (X11_Sampler, Ts);
             begin
                for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
+                  X11_Seen_Input := True;
                   Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Linux.Samplers.Item (Batch, I));
                end loop;
             end;
+         end if;
+
+         if Wayland_Session
+           and then Cfg.Enable_X11
+           and then Beep.Linux.Samplers.X11_Active (X11_Sampler)
+           and then not X11_Seen_Input
+           and then not X11_No_Input_Warned
+           and then Ts - Startup_Ts >= 15_000
+         then
+            Ada.Text_IO.Put_Line
+              ("[warn] no X11 keyboard/mouse activity observed on Wayland after 15s; interactive tuning may be incomplete");
+            X11_No_Input_Warned := True;
          end if;
 
          if Cfg.Log_Stats then
