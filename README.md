@@ -11,6 +11,19 @@ It currently combines:
 - Portable `bell`/`null` audio backends plus macOS native output via `afplay`
 - Runtime tuning via config reload (`SIGHUP`)
 
+## Homebrew Install (macOS)
+
+```bash
+brew tap jamestomasino/beep
+brew install jamestomasino/beep/beep
+```
+
+Verify:
+
+```bash
+beep --version
+```
+
 ## Dependencies
 
 General build dependencies:
