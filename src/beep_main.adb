@@ -139,6 +139,7 @@ procedure Beep_Main is
       Put_Line ("  --debug-events");
       Put_Line ("  --debug-cpu");
       Put_Line ("  --debug-fake-input");
+      Put_Line ("  --stats");
       Put_Line ("  --audio-null");
       Put_Line ("  --audio-bell");
       Put_Line ("  --help");
@@ -201,6 +202,7 @@ procedure Beep_Main is
    Cli_Debug_Events : Boolean := False;
    Cli_Debug_Cpu    : Boolean := False;
    Cli_Debug_Fake   : Boolean := False;
+   Cli_Stats        : Boolean := False;
    Cli_Audio_Null   : Boolean := False;
    Cli_Audio_Bell   : Boolean := False;
 
@@ -241,6 +243,7 @@ begin
          if Arg = "--debug-events" then Cli_Debug_Events := True; end if;
          if Arg = "--debug-cpu" then Cli_Debug_Cpu := True; end if;
          if Arg = "--debug-fake-input" then Cli_Debug_Fake := True; end if;
+         if Arg = "--stats" then Cli_Stats := True; end if;
          if Arg = "--audio-null" then Cli_Audio_Null := True; end if;
          if Arg = "--audio-bell" then Cli_Audio_Bell := True; end if;
       end;
@@ -266,6 +269,7 @@ begin
    if Cli_Debug_Events then Cfg.Log_Events := True; end if;
    if Cli_Debug_Cpu then Cfg.Debug_Cpu := True; end if;
    if Cli_Debug_Fake then Cfg.Debug_Fake_Input := True; end if;
+   Cfg.Log_Stats := Cli_Stats;
    if Cli_Audio_Null then Cfg.Audio_Backend := To_Unbounded_String ("null"); end if;
    if Cli_Audio_Bell then Cfg.Audio_Backend := To_Unbounded_String ("bell"); end if;
    Cfg.Engine.Ambient_Level := Cfg.Ambient_Level;

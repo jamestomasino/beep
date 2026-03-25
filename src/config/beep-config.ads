@@ -61,7 +61,7 @@ package Beep.Config is
       Master_Volume    : Float := 1.0;
       Ambient_Level    : Float := 1.0;
       Burst_Density    : Float := 1.0;
-      Log_Stats        : Boolean := True;
+      Log_Stats        : Boolean := False;
       Stats_Interval_Ms : Integer := 1000;
       Signal           : Signal_Config := (others => <>);
       Synth            : Synth_Config := (others => <>);

@@ -18,8 +18,7 @@ alr build
 ./obj/beep_main --debug-events --audio-bell
 ```
 
-By default the CLI now emits periodic `[stats ...]` lines with per-kind events/sec.
-Disable with config key `log_stats=false`.
+Use `--stats` to emit periodic `[stats ...]` lines with per-kind events/sec.
 
 ## Tests
 
