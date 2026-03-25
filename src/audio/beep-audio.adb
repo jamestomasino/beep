@@ -179,6 +179,23 @@ package body Beep.Audio is
       return Motif = Drone or else Motif = Hum or else Motif = Pad;
    end Is_Ambient_Motif;
 
+   function Mid_Blend_For_Motif (Motif : Motif_Type; Timestamp : Milliseconds) return Float is
+      Jitter : constant Float := Float ((Timestamp mod 17) + 1) / 18.0;
+   begin
+      case Motif is
+         when Tick | Tsk | Zap =>
+            return 0.16 + Jitter * 0.18;
+         when Cluster | Run | Stutter =>
+            return 0.28 + Jitter * 0.24;
+         when Chirp | Bip | Bloop | Yip =>
+            return 0.20 + Jitter * 0.24;
+         when Wheee | Whirr | Warble | Wobble =>
+            return 0.26 + Jitter * 0.26;
+         when others =>
+            return 0.24;
+      end case;
+   end Mid_Blend_For_Motif;
+
    G_Ambient_Phase : Float := 0.0;
 
    protected type Ambient_Control is
@@ -193,7 +210,7 @@ package body Beep.Audio is
 
    protected body Ambient_Control is
       procedure Drive (Motif : Motif_Type; Gain : Float) is
-         Driven : Float := Clamp01 (Gain) * 0.25;
+         Driven : Float := Clamp01 (Gain) * 0.32;
       begin
          case Motif is
             when Drone =>
@@ -215,8 +232,8 @@ package body Beep.Audio is
             Level := Level + (Driven - Level) * 0.30;
          end if;
 
-         if Level > 0.22 then
-            Level := 0.22;
+         if Level > 0.30 then
+            Level := 0.30;
          end if;
       end Drive;
 
@@ -265,13 +282,18 @@ package body Beep.Audio is
       Rate_F      : constant Float := Float (Engine.Sample_Rate);
       Written     : long;
       Ambient_Phase_Step : constant Float := Two_Pi * Ambient_Freq / Rate_F;
+      Mid_Blend   : constant Float := Mid_Blend_For_Motif (Event.Motif, Event.Timestamp);
+      Fore_Blend  : constant Float := 1.0 - Mid_Blend * 0.55;
    begin
       for I in Buffer'Range loop
          declare
             T          : constant Float := Float (I - 1) / Rate_F;
             Phase      : constant Float := Two_Pi * Frequency * T;
+            Mid_Phase  : constant Float := Two_Pi * (Frequency * 0.62) * T;
             N          : constant Float := Float (I - 1) / Float (Buffer'Length);
             Envelope   : Float := 1.0;
+            Fore_S     : Float;
+            Mid_S      : Float;
             Sample_F32 : Float;
             Ambient_S  : Float := 0.0;
          begin
@@ -292,8 +314,9 @@ package body Beep.Audio is
                end if;
             end if;
 
-            Sample_F32 :=
-              Ada.Numerics.Elementary_Functions.Sin (Phase) * Clamp01 (Gain) * Envelope;
+            Fore_S := Ada.Numerics.Elementary_Functions.Sin (Phase) * Clamp01 (Gain) * Envelope * Fore_Blend;
+            Mid_S := Ada.Numerics.Elementary_Functions.Sin (Mid_Phase) * Clamp01 (Gain) * Envelope * Mid_Blend;
+            Sample_F32 := Fore_S + Mid_S;
             Sample_F32 := Sample_F32 + Ambient_S;
             if Sample_F32 > 1.0 then
                Sample_F32 := 1.0;
