@@ -1,5 +1,13 @@
 project Beep is
-   for Source_Dirs use ("src", "src/core", "src/config", "src/linux", "src/audio", "src/runtime", "src/tests");
+   type Build_OS_Type is ("linux", "darwin");
+   Build_OS : Build_OS_Type := External ("BEEP_OS", "linux");
+
+   case Build_OS is
+      when "darwin" =>
+         for Source_Dirs use ("src", "src/core", "src/config", "src/linux_stub", "src/audio", "src/audio/darwin", "src/runtime", "src/tests", "src/platform");
+      when "linux" =>
+         for Source_Dirs use ("src", "src/core", "src/config", "src/linux", "src/audio", "src/audio/linux", "src/runtime", "src/tests", "src/platform");
+   end case;
    for Object_Dir use "obj";
    for Main use ("main.adb", "beep_core_tests.adb", "beep_config_tests.adb");
 
@@ -22,6 +30,12 @@ project Beep is
    end Builder;
 
    package Linker is
-      for Switches ("Ada") use ("-Wl,-z,relro", "-Wl,-z,now", "-lX11", "-lasound");
+      case Build_OS is
+         when "darwin" =>
+            for Switches ("Ada") use ();
+         when "linux" =>
+            for Switches ("Ada") use ("-lX11", "-lasound");
+      end case;
    end Linker;
+
 end Beep;

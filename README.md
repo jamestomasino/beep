@@ -5,51 +5,36 @@
 *beep beep*
 
 It currently combines:
-- Linux `/proc` samplers (CPU/system/network/load/disk/pressure)
-- X11 activity sampling (keyboard/mouse where available)
-- Native Ada mapping/synthesis logic with ALSA output (and null/bell backends)
+- Platform samplers via `Beep.Platform.Samplers`:
+  - Linux: `/proc` CPU/system/network sources
+  - macOS: `sysctl`/`ps`/`memory_pressure`/`netstat` sources plus `IOHIDSystem` idle-time input activity
+- Portable `bell`/`null` audio backends plus macOS native output via `afplay`
 - Runtime tuning via config reload (`SIGHUP`)
 
 ## Dependencies
 
-`beep` links against X11 and ALSA:
-- `libX11` (`-lX11`)
-- `libasound` (`-lasound`)
-
-Install build dependencies:
+General build dependencies:
 
 Ubuntu/Debian:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential pkg-config libx11-dev libasound2-dev
+sudo apt install -y build-essential
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install -y gcc pkgconf-pkg-config xorg-x11-devel alsa-lib-devel
+sudo dnf install -y gcc
 ```
 
 Arch Linux:
 
 ```bash
-sudo pacman -S --needed base-devel pkgconf libx11 alsa-lib
+sudo pacman -S --needed base-devel
 ```
 
-Runtime-only (if you copy a prebuilt binary):
-
-Ubuntu/Debian:
-
-```bash
-sudo apt install -y libx11-6 libasound2
-```
-
-Fedora:
-
-```bash
-sudo dnf install -y libX11 alsa-lib
-```
+No external runtime libraries are currently required for the portable `bell`/`null` backends.
 
 ## Toolchain
 
@@ -76,10 +61,10 @@ Arch Linux:
 sudo pacman -S --needed gcc-ada
 ```
 
-Install Alire:
+Install Alire (recommended: use the latest release from):
 
 ```bash
-curl -sSf https://alire.ada.dev/install.sh | sh
+https://github.com/alire-project/alire/releases/latest
 ```
 
 If you prefer distro packages, check your distribution repositories for `alire`.
@@ -89,6 +74,13 @@ If you prefer distro packages, check your distribution repositories for `alire`.
 ```bash
 alr update
 alr build
+```
+
+On macOS builds, select Darwin sources explicitly:
+
+```bash
+BEEP_OS=darwin alr update
+BEEP_OS=darwin alr build
 ```
 
 Main binary output:
@@ -126,6 +118,18 @@ rm -f ~/.local/bin/beep
 sudo rm -f /usr/local/bin/beep
 ```
 
+## macOS + Homebrew (Binary Releases)
+
+This repo includes a tag-triggered GitHub Actions workflow at
+`.github/workflows/release-macos.yml` that builds macOS binaries and
+publishes them as GitHub Release assets.
+
+Use those assets from a custom Homebrew tap formula for precompiled installs.
+See:
+
+- `docs/homebrew-binary-release.md`
+- `docs/macos-homebrew-plan.md`
+
 ## Run
 
 ```bash
@@ -157,13 +161,16 @@ profile=normal
 enable_cpu=true
 enable_system=true
 enable_network=true
-enable_x11=true
+enable_x11=false
 log_events=false
 log_stats=false
 stats_interval_ms=1000
 debug_cpu=false
 debug_fake_input=false
 audio_backend=miniaudio
+# macOS native output options: coreaudio | native | afplay | miniaudio
+# macOS interactive input sampler (IOHIDSystem idle time):
+enable_x11=true
 master_volume=1.0
 ambient_level=1.0
 burst_density=1.0
