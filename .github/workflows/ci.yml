@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y gnat gprbuild spark2014 curl unzip
+          sudo apt-get install -y gnat gprbuild curl unzip
 
       - name: Install Alire
         shell: bash
@@ -46,9 +46,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          alr -n update
           alr --version
           gprbuild --version
-          gnatprove --version
+          alr -n exec -- gnatprove --version
 
       - name: Build
         shell: bash
