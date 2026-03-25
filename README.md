@@ -10,6 +10,80 @@ It currently combines:
 - Native Ada mapping/synthesis logic with ALSA output (and null/bell backends)
 - Runtime tuning via config reload (`SIGHUP`)
 
+## Dependencies
+
+`beep` links against X11 and ALSA:
+- `libX11` (`-lX11`)
+- `libasound` (`-lasound`)
+
+Install build dependencies:
+
+Ubuntu/Debian:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential pkg-config libx11-dev libasound2-dev
+```
+
+Fedora:
+
+```bash
+sudo dnf install -y gcc pkgconf-pkg-config xorg-x11-devel alsa-lib-devel
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -S --needed base-devel pkgconf libx11 alsa-lib
+```
+
+Runtime-only (if you copy a prebuilt binary):
+
+Ubuntu/Debian:
+
+```bash
+sudo apt install -y libx11-6 libasound2
+```
+
+Fedora:
+
+```bash
+sudo dnf install -y libX11 alsa-lib
+```
+
+## Toolchain
+
+You need:
+- GNAT (Ada compiler/toolchain)
+- Alire (`alr`, Ada package manager/build frontend)
+
+Ubuntu/Debian:
+
+```bash
+sudo apt update
+sudo apt install -y gnat
+```
+
+Fedora:
+
+```bash
+sudo dnf install -y gcc-gnat
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -S --needed gcc-ada
+```
+
+Install Alire:
+
+```bash
+curl -sSf https://alire.ada.dev/install.sh | sh
+```
+
+If you prefer distro packages, check your distribution repositories for `alire`.
+
 ## Build
 
 ```bash
