@@ -23,12 +23,6 @@ project Beep is
          "-gnat2022",-- Ada 2022 mode
          "-gnatwe"   -- Treat warnings as errors
       );
-      case Build_OS is
-         when "darwin" =>
-            for Default_Switches ("C") use ("-fblocks");
-         when "linux" =>
-            null;
-      end case;
    end Compiler;
 
    package Binder is

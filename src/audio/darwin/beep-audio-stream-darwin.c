@@ -4,7 +4,7 @@
 
 #if defined(__APPLE__)
 
-#include <AudioToolbox/AudioToolbox.h>
+#include <AudioToolbox/AudioQueue.h>
 #include <pthread.h>
 #include <stdatomic.h>
 
