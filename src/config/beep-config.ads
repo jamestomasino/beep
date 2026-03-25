@@ -8,7 +8,7 @@ package Beep.Config is
       Cpu_Weight        : Float := 0.92;
       Process_Weight    : Float := 1.00;
       Memory_Weight     : Float := 0.96;
-      System_Weight     : Float := 0.90;
+      System_Weight     : Float := 0.78;
       Network_Weight    : Float := 0.95;
 
       Keyboard_Min_Gap_Ms : Integer := 18;
@@ -16,13 +16,13 @@ package Beep.Config is
       Cpu_Min_Gap_Ms      : Integer := 60;
       Process_Min_Gap_Ms  : Integer := 28;
       Memory_Min_Gap_Ms   : Integer := 38;
-      System_Min_Gap_Ms   : Integer := 34;
+      System_Min_Gap_Ms   : Integer := 48;
       Network_Min_Gap_Ms  : Integer := 26;
 
       Mouse_Click_Boost : Float := 1.22;
       X11_Keyboard_Boost : Float := 1.12;
-      Psi_Weight        : Float := 0.88;
-      Loadavg_Weight    : Float := 0.78;
+      Psi_Weight        : Float := 0.72;
+      Loadavg_Weight    : Float := 0.55;
       Disk_Weight       : Float := 0.90;
    end record;
 

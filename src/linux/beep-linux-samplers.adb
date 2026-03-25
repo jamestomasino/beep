@@ -634,11 +634,14 @@ package body Beep.Linux.Samplers is
       Proc_Delta   : Unsigned_64;
       Ctxt_Delta   : Unsigned_64;
       Mem_Delta    : Float;
+      Load_Delta   : Float;
       Intensity    : Float;
       Dt_Ms        : Milliseconds;
       Disk_Delta   : Unsigned_64;
       Disk_Bps     : Float;
       Psi_Combined : Float;
+      Prev_Psi_Combined : Float;
+      Psi_Delta    : Float;
    begin
       if not Read_System_Snapshot (Next) then
          return Batch;
@@ -699,8 +702,12 @@ package body Beep.Linux.Samplers is
              Source => To_Unbounded_String ("linux.proc.mem"), Cpu_Bucket => Idle));
       end if;
 
-      Intensity := Clamp01 (Next.Loadavg_1 / 4.0);
-      if Intensity > 0.10 then
+      Load_Delta := Next.Loadavg_1 - Sampler.Prev.Loadavg_1;
+      if Load_Delta < 0.0 then
+         Load_Delta := -Load_Delta;
+      end if;
+      Intensity := Clamp01 (Load_Delta * 2.8 + (Next.Loadavg_1 / 8.0));
+      if Load_Delta > 0.03 or else Next.Loadavg_1 > 2.2 then
          Add_Sample
            (Batch,
             (Kind => Beep.Core.Types.System, Intensity => Intensity, Timestamp => Timestamp,
@@ -724,11 +731,17 @@ package body Beep.Linux.Samplers is
       end if;
 
       Psi_Combined := Float'Max (Next.Psi_Cpu_Avg10 * 0.9, Float'Max (Next.Psi_Io_Avg10 * 1.3, Next.Psi_Mem_Avg10 * 1.6));
+      Prev_Psi_Combined := Float'Max (Sampler.Prev.Psi_Cpu_Avg10 * 0.9, Float'Max (Sampler.Prev.Psi_Io_Avg10 * 1.3, Sampler.Prev.Psi_Mem_Avg10 * 1.6));
       Psi_Combined := Clamp01 (Psi_Combined);
-      if Psi_Combined > 0.02 then
+      Prev_Psi_Combined := Clamp01 (Prev_Psi_Combined);
+      Psi_Delta := Psi_Combined - Prev_Psi_Combined;
+      if Psi_Delta < 0.0 then
+         Psi_Delta := -Psi_Delta;
+      end if;
+      if Psi_Combined > 0.08 or else Psi_Delta > 0.015 then
          Add_Sample
            (Batch,
-            (Kind => Beep.Core.Types.System, Intensity => Psi_Combined, Timestamp => Timestamp,
+            (Kind => Beep.Core.Types.System, Intensity => Clamp01 (Psi_Combined + Psi_Delta * 2.2), Timestamp => Timestamp,
              Source => To_Unbounded_String ("linux.proc.psi"), Cpu_Bucket => Idle));
       end if;
 
