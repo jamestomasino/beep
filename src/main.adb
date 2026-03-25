@@ -13,7 +13,7 @@ with Beep.Core.Types;
 with Beep.Linux.Samplers;
 with Beep.Runtime.Signals;
 
-procedure Beep_Main is
+procedure Main is
    use Ada.Strings.Unbounded;
    use Beep.Core.Types;
 
@@ -494,4 +494,4 @@ exception
       Cleanup;
       Ada.Text_IO.Put_Line ("[error] beep main failed: " & Ada.Exceptions.Exception_Message (E));
       raise;
-end Beep_Main;
+end Main;

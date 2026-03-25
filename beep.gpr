@@ -1,7 +1,7 @@
 project Beep is
    for Source_Dirs use ("src", "src/core", "src/config", "src/linux", "src/audio", "src/runtime", "src/tests");
    for Object_Dir use "obj";
-   for Main use ("beep_main.adb", "beep_core_tests.adb", "beep_config_tests.adb");
+   for Main use ("main.adb", "beep_core_tests.adb", "beep_config_tests.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use (
@@ -16,7 +16,7 @@ project Beep is
    end Binder;
 
    package Builder is
-      for Executable ("beep_main.adb") use "beep";
+      for Executable ("main.adb") use "beep";
       for Executable ("beep_core_tests.adb") use "beep_core_tests";
       for Executable ("beep_config_tests.adb") use "beep_config_tests";
    end Builder;
