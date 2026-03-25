@@ -1,13 +1,16 @@
 with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Exceptions;
-with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Beep.Config;
+with Beep.Core.Mapping;
+with Beep.Core.Types;
+with Beep.Linux.Samplers;
 
 procedure Beep_Main is
    use Ada.Strings.Unbounded;
+   use Beep.Core.Types;
 
    function Starts_With (Text : String; Prefix : String) return Boolean is
    begin
@@ -49,16 +52,38 @@ procedure Beep_Main is
       Put_Line ("  --help");
    end Print_Usage;
 
-   Cfg                : Beep.Config.App_Config := Beep.Config.With_Profile (Beep.Config.Defaults, "normal");
-   Config_Path        : Unbounded_String := To_Unbounded_String (Beep.Config.Default_Config_Path);
-   Cli_Profile        : Unbounded_String := Null_Unbounded_String;
-   Cli_No_Cpu         : Boolean := False;
-   Cli_No_System      : Boolean := False;
-   Cli_No_Net         : Boolean := False;
-   Cli_Debug_Events   : Boolean := False;
-   Cli_Debug_Cpu      : Boolean := False;
-   Cli_Debug_Fake     : Boolean := False;
-   Cli_Audio_Null     : Boolean := False;
+   procedure Handle_Sample
+     (State  : in out Engine_State;
+      Cfg    : Beep.Config.App_Config;
+      Sample : Activity_Sample)
+   is
+      Event : Optional_Sound_Event := Beep.Core.Mapping.Map_Activity (State, Cfg.Engine, Sample);
+   begin
+      if Event.Has_Value and then Cfg.Log_Events then
+         Ada.Text_IO.Put_Line
+           ("[" & Long_Long_Integer'Image (Event.Value.Timestamp) & "] "
+            & Beep.Core.Types.Motif_Image (Event.Value.Motif)
+            & " gain=" & Float'Image (Event.Value.Gain)
+            & " duration=" & Integer'Image (Event.Value.Duration_Ms)
+            & "ms");
+      end if;
+   end Handle_Sample;
+
+   Cfg              : Beep.Config.App_Config := Beep.Config.With_Profile (Beep.Config.Defaults, "normal");
+   Config_Path      : Unbounded_String := To_Unbounded_String (Beep.Config.Default_Config_Path);
+   Cli_Profile      : Unbounded_String := Null_Unbounded_String;
+   Cli_No_Cpu       : Boolean := False;
+   Cli_No_System    : Boolean := False;
+   Cli_No_Net       : Boolean := False;
+   Cli_Debug_Events : Boolean := False;
+   Cli_Debug_Cpu    : Boolean := False;
+   Cli_Debug_Fake   : Boolean := False;
+   Cli_Audio_Null   : Boolean := False;
+
+   Mapper_State : Engine_State := New_State;
+   Cpu_Sampler  : Beep.Linux.Samplers.Cpu_Sampler;
+   Sys_Sampler  : Beep.Linux.Samplers.System_Sampler;
+   Net_Sampler  : Beep.Linux.Samplers.Net_Sampler;
 
 begin
    if Has_Flag ("--help") or else Has_Flag ("-h") then
@@ -117,4 +142,48 @@ begin
    Ada.Text_IO.Put_Line ("sources: cpu=" & Boolean'Image (Cfg.Enable_Cpu)
       & " system=" & Boolean'Image (Cfg.Enable_System)
       & " net=" & Boolean'Image (Cfg.Enable_Network));
+
+   Beep.Linux.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler);
+
+   Ada.Text_IO.Put_Line ("beep sampler loop started. Ctrl+C to stop.");
+   loop
+      declare
+         Ts : constant Milliseconds := Beep.Linux.Samplers.Now_Ms;
+      begin
+         if Cfg.Enable_Cpu then
+            declare
+               Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
+                 Beep.Linux.Samplers.Poll_Cpu (Cpu_Sampler, Cfg.Engine, Cfg.Debug_Cpu, Ts);
+            begin
+               if Beep.Linux.Samplers.Has_Value (Sample) then
+                  Handle_Sample (Mapper_State, Cfg, Beep.Linux.Samplers.Value (Sample));
+               end if;
+            end;
+         end if;
+
+         if Cfg.Enable_System then
+            declare
+               Batch : constant Beep.Linux.Samplers.Activity_Batch :=
+                 Beep.Linux.Samplers.Poll_System (Sys_Sampler, Ts);
+            begin
+               for I in 1 .. Beep.Linux.Samplers.Count (Batch) loop
+                  Handle_Sample (Mapper_State, Cfg, Beep.Linux.Samplers.Item (Batch, I));
+               end loop;
+            end;
+         end if;
+
+         if Cfg.Enable_Network then
+            declare
+               Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
+                 Beep.Linux.Samplers.Poll_Net (Net_Sampler, Ts);
+            begin
+               if Beep.Linux.Samplers.Has_Value (Sample) then
+                  Handle_Sample (Mapper_State, Cfg, Beep.Linux.Samplers.Value (Sample));
+               end if;
+            end;
+         end if;
+      end;
+
+      delay 0.30;
+   end loop;
 end Beep_Main;
