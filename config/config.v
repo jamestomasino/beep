@@ -78,7 +78,7 @@ pub fn with_profile(cfg AppConfig, profile_name string) AppConfig {
 				ambient_blip_chance:    0.48
 				ambient_blip_gain:      0.08
 				cluster_steps_min:      3
-				cluster_steps_max:      7
+				cluster_steps_max:      9
 				cluster_spacing_min_ms: 8
 				cluster_spacing_max_ms: 20
 			}
@@ -131,7 +131,7 @@ pub fn with_profile(cfg AppConfig, profile_name string) AppConfig {
 				ambient_blip_chance:    0.42
 				ambient_blip_gain:      0.12
 				cluster_steps_min:      4
-				cluster_steps_max:      10
+				cluster_steps_max:      14
 				cluster_spacing_min_ms: 4
 				cluster_spacing_max_ms: 14
 				stutter_steps_min:      3
@@ -188,7 +188,7 @@ pub fn with_profile(cfg AppConfig, profile_name string) AppConfig {
 				ambient_blip_chance:    0.36
 				ambient_blip_gain:      0.10
 				cluster_steps_min:      3
-				cluster_steps_max:      8
+				cluster_steps_max:      12
 				cluster_spacing_min_ms: 6
 				cluster_spacing_max_ms: 16
 				stutter_steps_min:      2

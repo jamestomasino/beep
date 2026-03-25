@@ -36,6 +36,10 @@ fn choose_motif(mut state EngineState, options []string) string {
 	return options[int(next_rand(mut state) % u32(options.len))]
 }
 
+fn is_sequenced_motif(motif string) bool {
+	return motif == 'run' || motif == 'cluster' || motif == 'stutter'
+}
+
 fn base_duration_for_motif(motif string) int {
 	return match motif {
 		'drone' { 7000 }
@@ -90,10 +94,11 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 			if sample.intensity < cfg.keyboard_threshold {
 				return none
 			}
-			mut options := ['bip', 'chirp', 'tick', 'cluster', 'run']
+			mut options := ['bip', 'chirp', 'tick', 'cluster', 'cluster', 'cluster', 'run']
 			if sample.intensity > cfg.keyboard_yip_intensity
 				&& rand01(mut state) < clamp01(cfg.keyboard_yip_chance) {
 				options << 'yip'
+				options << 'stutter'
 				options << 'stutter'
 			}
 			if rand01(mut state) < clamp01(cfg.keyboard_chirp_chance) {
@@ -106,10 +111,11 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 			if sample.intensity < cfg.mouse_threshold {
 				return none
 			}
-			mut options := ['bip', 'chirp', 'tick', 'cluster', 'run', 'bloop']
+			mut options := ['bip', 'chirp', 'tick', 'cluster', 'cluster', 'cluster', 'run', 'bloop']
 			if sample.intensity > cfg.mouse_flick_intensity
 				&& rand01(mut state) < clamp01(cfg.mouse_flick_chance) {
 				options << 'yip'
+				options << 'stutter'
 				options << 'stutter'
 			}
 			if (sample.source.contains('click') || sample.source.contains('press'))
@@ -136,8 +142,8 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 					reason = 'cpu idle variety'
 				}
 				.active {
-					motif = choose_motif(mut state, ['whirr', 'warble', 'cluster', 'run', 'tick', 'hum', 'drone', 'pad',
-						'wobble'])
+					motif = choose_motif(mut state, ['whirr', 'warble', 'cluster', 'run', 'tick',
+						'hum', 'drone', 'pad', 'wobble', 'cluster', 'cluster', 'cluster', 'run'])
 					gain = if sample.intensity < cfg.cpu_active_cutoff {
 						cfg.cpu_active_cutoff
 					} else {
@@ -146,8 +152,8 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 					reason = 'cpu active variety'
 				}
 				.busy {
-					motif = choose_motif(mut state, ['wheee', 'warble', 'stutter', 'cluster', 'run', 'zap', 'whirr',
-						'wobble'])
+					motif = choose_motif(mut state, ['wheee', 'warble', 'stutter', 'cluster', 'run',
+						'zap', 'whirr', 'wobble', 'stutter', 'cluster', 'cluster', 'cluster', 'run'])
 					gain = if sample.intensity < cfg.cpu_busy_cutoff {
 						cfg.cpu_busy_cutoff
 					} else {
@@ -161,21 +167,24 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 			if sample.intensity < cfg.process_threshold {
 				return none
 			}
-			motif = choose_motif(mut state, ['tick', 'cluster', 'stutter', 'run', 'chirp', 'bip', 'wobble'])
+			motif = choose_motif(mut state, ['tick', 'cluster', 'stutter', 'run', 'chirp', 'bip',
+				'wobble', 'cluster', 'cluster', 'cluster', 'stutter', 'run'])
 			reason = 'process variety'
 		}
 		.memory {
 			if sample.intensity < cfg.memory_threshold {
 				return none
 			}
-			motif = choose_motif(mut state, ['tsk', 'warble', 'cluster', 'run', 'chirp', 'bloop', 'wobble'])
+			motif = choose_motif(mut state, ['tsk', 'warble', 'cluster', 'run', 'chirp', 'bloop',
+				'wobble', 'cluster', 'cluster', 'run'])
 			reason = 'memory variety'
 		}
 		.system {
 			if sample.intensity < cfg.system_threshold {
 				return none
 			}
-			motif = choose_motif(mut state, ['tick', 'stutter', 'cluster', 'run', 'bip', 'tsk', 'wobble'])
+			motif = choose_motif(mut state, ['tick', 'stutter', 'cluster', 'run', 'bip', 'tsk',
+				'wobble', 'stutter', 'cluster', 'cluster', 'cluster', 'run'])
 			gain = sample.intensity * 0.85
 			reason = 'system variety'
 		}
@@ -183,7 +192,8 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 			if sample.intensity < cfg.network_threshold {
 				return none
 			}
-			motif = choose_motif(mut state, ['tsk', 'chirp', 'stutter', 'cluster', 'run', 'zap', 'bip', 'wobble'])
+			motif = choose_motif(mut state, ['tsk', 'chirp', 'stutter', 'cluster', 'run', 'zap',
+				'bip', 'wobble', 'stutter', 'cluster', 'cluster', 'cluster', 'run'])
 			gain = sample.intensity * 0.95
 			reason = 'network variety'
 		}
@@ -195,6 +205,10 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 		drop_chance = clamp01(0.22 - density * 0.10)
 	} else if motif == 'tick' || motif == 'tsk' {
 		drop_chance = clamp01(drop_chance - 0.18)
+	} else if motif == 'cluster' {
+		drop_chance = clamp01(drop_chance - 0.24)
+	} else if is_sequenced_motif(motif) {
+		drop_chance = clamp01(drop_chance - 0.14)
 	}
 	if drop_chance > 0 && f32(next_rand(mut state) & 0xFFFF) / 65535.0 < drop_chance {
 		return none
@@ -216,6 +230,16 @@ pub fn map_activity(mut state EngineState, cfg EngineConfig, sample ActivitySamp
 	}
 	if motif == 'hum' || motif == 'drone' || motif == 'wobble' || motif == 'pad' {
 		motif_cooldown = motif_cooldown * 2
+	} else if motif == 'cluster' {
+		motif_cooldown = i64(f32(motif_cooldown) * 0.45)
+		if motif_cooldown < 3 {
+			motif_cooldown = 3
+		}
+	} else if is_sequenced_motif(motif) {
+		motif_cooldown = i64(f32(motif_cooldown) * 0.60)
+		if motif_cooldown < 4 {
+			motif_cooldown = 4
+		}
 	}
 	if motif == state.last_motif && now_ms - state.last_emit_ms < motif_cooldown && density < 0.86 {
 		return none

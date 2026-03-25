@@ -56,6 +56,7 @@ fn load_sample_bank() map[string][]int {
 		}
 		name := file.to_lower()
 		if name.starts_with('amb_') || name.contains('engine') {
+			append_slot(mut slots, 'bg', idx)
 			append_slot(mut slots, 'hum', idx)
 			append_slot(mut slots, 'drone', idx)
 			append_slot(mut slots, 'pad', idx)
@@ -79,8 +80,28 @@ fn load_sample_bank() map[string][]int {
 	return slots
 }
 
+fn is_ambient_motif_backend(motif string) bool {
+	return motif in ['hum', 'drone', 'pad', 'wobble', 'whirr']
+}
+
+fn is_sequenced_motif_backend(motif string) bool {
+	return motif in ['cluster', 'stutter', 'run']
+}
+
+fn hotness_from_event(event core.SoundEvent) f32 {
+	// Treat high event gain as "hot" periods; clamp into [0, 1].
+	mut h := (event.gain - 0.55) / 0.45
+	if h < 0.0 {
+		h = 0.0
+	}
+	if h > 1.0 {
+		h = 1.0
+	}
+	return h
+}
+
 fn pick_sample_gain(event core.SoundEvent) f32 {
-	if event.motif in ['hum', 'drone', 'pad', 'wobble', 'whirr'] {
+	if is_ambient_motif_backend(event.motif) {
 		return event.gain * 0.18
 	}
 	if event.motif in ['tick', 'tsk', 'cluster', 'stutter'] {
@@ -93,13 +114,63 @@ fn sample_trigger_chance(event core.SoundEvent) f32 {
 	if event.motif in ['tick', 'tsk'] {
 		return 0.42
 	}
-	if event.motif in ['cluster', 'stutter', 'run'] {
+	if is_sequenced_motif_backend(event.motif) {
 		return 0.0
 	}
-	if event.motif in ['hum', 'drone', 'pad', 'wobble', 'whirr'] {
+	if is_ambient_motif_backend(event.motif) {
 		return 0.20
 	}
 	return 0.30
+}
+
+fn bg_sample_trigger_chance(event core.SoundEvent) f32 {
+	hot := hotness_from_event(event)
+	if is_ambient_motif_backend(event.motif) {
+		return 0.24 + event.gain * 0.24 + hot * 0.26
+	}
+	if is_sequenced_motif_backend(event.motif) {
+		return 0.06 + event.gain * 0.08 + hot * 0.12
+	}
+	return 0.10 + event.gain * 0.12 + hot * 0.18
+}
+
+fn pick_bg_sample_gain(event core.SoundEvent) f32 {
+	hot := hotness_from_event(event)
+	mut out := f32(0.06)
+	if is_ambient_motif_backend(event.motif) {
+		out = event.gain * 0.10
+	} else if is_sequenced_motif_backend(event.motif) {
+		out = event.gain * 0.045
+	} else {
+		out = event.gain * 0.06
+	}
+	out *= 1.0 + hot * 0.55
+	if out < 0.01 {
+		out = 0.01
+	}
+	if out > 0.28 {
+		out = 0.28
+	}
+	return out
+}
+
+fn bg_delay_ms(event core.SoundEvent, salt u32) int {
+	hot := hotness_from_event(event)
+	x := (u32(event.timestamp) * 2654435761) ^ salt
+	mut base_min := 120
+	mut base_span := 860
+	if hot > 0.0 {
+		base_min = 80 - int(hot * 28.0)
+		base_span = 860 - int(hot * 380.0)
+	}
+	if base_min < 46 {
+		base_min = 46
+	}
+	if base_span < 220 {
+		base_span = 220
+	}
+	base := base_min + int((x >> 8) % u32(base_span))
+	return if is_sequenced_motif_backend(event.motif) { base + 120 } else { base }
 }
 
 fn chance_from_event(event core.SoundEvent, salt u32) f32 {
@@ -141,6 +212,56 @@ pub fn (b MiniAudioBackend) play(event core.SoundEvent) {
 					sgain = 0.65
 				}
 				_ = C.beep_audio_enqueue_sample_ex(slots[pick], sgain, 0)
+			}
+		}
+	}
+
+	// Additional background-oriented ambient layer with its own delayed cadence.
+	if 'bg' in b.sample_slots {
+		bg_slots := b.sample_slots['bg']
+		if bg_slots.len > 0 {
+			hot := hotness_from_event(event)
+			bg_r := chance_from_event(event, 0xA341)
+			if bg_r < bg_sample_trigger_chance(event) {
+				bg_pick := int(((u32(event.timestamp) >> 2) ^ 0x27d4eb2d) % u32(bg_slots.len))
+				mut bg_gain := pick_bg_sample_gain(event)
+				if bg_gain < 0.015 {
+					bg_gain = 0.015
+				}
+				if bg_gain > 0.24 {
+					bg_gain = 0.24
+				}
+				_ = C.beep_audio_enqueue_sample_ex(bg_slots[bg_pick], bg_gain, bg_delay_ms(event,
+					0x77c1))
+
+				// Rare second grain to create moving background smear without crowding.
+				second_grain_chance := 0.14 + hot * 0.26
+				if chance_from_event(event, 0x5BD1) < second_grain_chance {
+					mut bg_pick2 := int(((u32(event.timestamp) >> 1) ^ 0x85ebca6b) % u32(bg_slots.len))
+					if bg_slots.len > 1 && bg_pick2 == bg_pick {
+						bg_pick2 = (bg_pick2 + 1 + int(u32(event.timestamp) % u32(bg_slots.len - 1))) % bg_slots.len
+					}
+					mut bg_gain2 := bg_gain * 0.62
+					if bg_gain2 < 0.01 {
+						bg_gain2 = 0.01
+					}
+					_ = C.beep_audio_enqueue_sample_ex(bg_slots[bg_pick2], bg_gain2,
+						bg_delay_ms(event, 0x13f9) + 180)
+				}
+
+				// In hot moments, occasionally add a third very soft trail grain.
+				if hot > 0.55 && chance_from_event(event, 0x39A7) < (hot - 0.55) * 0.26 {
+					mut bg_pick3 := int(((u32(event.timestamp) >> 3) ^ 0xc2b2ae35) % u32(bg_slots.len))
+					if bg_slots.len > 1 && bg_pick3 == bg_pick {
+						bg_pick3 = (bg_pick3 + 1) % bg_slots.len
+					}
+					mut bg_gain3 := bg_gain * 0.38
+					if bg_gain3 < 0.01 {
+						bg_gain3 = 0.01
+					}
+					_ = C.beep_audio_enqueue_sample_ex(bg_slots[bg_pick3], bg_gain3,
+						bg_delay_ms(event, 0x2D77) + 320)
+				}
 			}
 		}
 	}

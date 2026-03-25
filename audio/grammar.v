@@ -76,6 +76,128 @@ fn motif_hash(s string) u32 {
 	return h
 }
 
+fn is_ambient_motif(motif string) bool {
+	return motif == 'hum' || motif == 'drone' || motif == 'pad' || motif == 'whirr'
+}
+
+fn is_sequenced_motif(motif string) bool {
+	return motif == 'run' || motif == 'cluster' || motif == 'stutter'
+}
+
+fn add_active_cacophony(mut out []VoiceLayer, motif string, energy f32, mut rng Rng) {
+	if energy < 0.52 || out.len == 0 {
+		return
+	}
+
+	base_layers := out.clone()
+	mut layers_to_add := if energy > 0.82 { 5 } else { 4 }
+	if is_sequenced_motif(motif) {
+		layers_to_add++
+	}
+	if is_ambient_motif(motif) {
+		layers_to_add = 1
+	}
+
+	for i in 0 .. layers_to_add {
+		src_idx := int((u32(i) * 2654435761 + rng.next_u32()) % u32(base_layers.len))
+		src := base_layers[src_idx]
+		role := i % 4
+		mut delay := src.delay_ms
+		mut dur := src.duration_ms
+		mut wave := src.waveform
+		mut freq0 := src.freq0
+		mut freq1 := src.freq1
+		mut g := src.gain_mul * 0.10
+
+		match role {
+			0 {
+				// Shadow: close pitch, short delay, glue layer.
+				delay += 4 + int(rng.next_u32() % 42)
+				dur = int(f32(src.duration_ms) * rng.range_f32(0.90, 1.70))
+				wave = if src.waveform == 4 { 0 } else { src.waveform }
+				freq0 = src.freq0 * rng.range_f32(0.96, 1.04)
+				freq1 = src.freq1 * rng.range_f32(0.95, 1.05)
+				g = src.gain_mul * rng.range_f32(0.08, 0.18)
+			}
+			1 {
+				// Harmonic: shifted partial with medium delay.
+				delay += 14 + int(rng.next_u32() % 130)
+				dur = int(f32(src.duration_ms) * rng.range_f32(0.70, 1.45))
+				wave = if is_sequenced_motif(motif) {
+					0
+				} else {
+					if rng.chance(0.58) { 1 } else { 2 }
+				}
+				h := if is_sequenced_motif(motif) {
+					rng.range_f32(1.25, 2.00)
+				} else {
+					rng.range_f32(1.45, 2.60)
+				}
+				freq0 = src.freq0 * h
+				freq1 = src.freq1 * h * rng.range_f32(0.96, 1.06)
+				g = src.gain_mul * rng.range_f32(0.06, 0.14)
+			}
+			2 {
+				// Texture: noisy air with wider timing spread.
+				delay += 3 + int(rng.next_u32() % 230)
+				if is_sequenced_motif(motif) {
+					// Keep sequenced motifs beep-forward; avoid squirt/noise character.
+					dur = 10 + int(rng.next_u32() % 120)
+					wave = 0
+					freq0 = src.freq0 * rng.range_f32(0.88, 1.22)
+					freq1 = src.freq1 * rng.range_f32(0.86, 1.20)
+					g = src.gain_mul * rng.range_f32(0.04, 0.09)
+				} else {
+					dur = 14 + int(rng.next_u32() % 210)
+					wave = if rng.chance(0.64) { 3 } else { 4 }
+					freq0 = rng.range_f32(850, 2700)
+					freq1 = rng.range_f32(520, 1900)
+					g = src.gain_mul * rng.range_f32(0.04, 0.11)
+				}
+			}
+			else {
+				// Tail: delayed smear/pad, longer and softer.
+				delay += 36 + int(rng.next_u32() % 280)
+				dur = int(f32(src.duration_ms) * if is_sequenced_motif(motif) {
+					rng.range_f32(0.70, 1.50)
+				} else {
+					rng.range_f32(1.50, 3.20)
+				})
+				wave = if rng.chance(0.72) { 0 } else { 2 }
+				l := if is_sequenced_motif(motif) {
+					rng.range_f32(0.90, 1.35)
+				} else {
+					rng.range_f32(0.55, 1.10)
+				}
+				freq0 = src.freq0 * l
+				freq1 = src.freq1 * l * rng.range_f32(0.94, 1.07)
+				g = src.gain_mul * rng.range_f32(0.05, 0.13)
+			}
+		}
+
+		if delay > 980 {
+			delay = 980
+		}
+		if dur < 12 {
+			dur = 12
+		}
+		if dur > 900 {
+			dur = 900
+		}
+		if g < 0.02 {
+			g = 0.02
+		}
+		out << VoiceLayer{
+			waveform:    wave
+			freq0:       freq0
+			freq1:       freq1
+			gain_mul:    g
+			duration_ms: dur
+			delay_ms:    delay
+		}
+	}
+}
+
 pub fn plan_layers(event core.SoundEvent, synth_cfg SynthConfig) []VoiceLayer {
 	mut out := []VoiceLayer{}
 	base_dur := if event.duration_ms > 0 { event.duration_ms } else { 60 }
@@ -97,8 +219,8 @@ pub fn plan_layers(event core.SoundEvent, synth_cfg SynthConfig) []VoiceLayer {
 				if tail_dur > 220 {
 					tail_dur = 220
 				}
-				out << VoiceLayer{0, f * rng.range_f32(0.98, 1.01), f * rng.range_f32(0.98, 1.01), 0.20,
-					tail_dur, 6}
+				out << VoiceLayer{0, f * rng.range_f32(0.98, 1.01), f * rng.range_f32(0.98,
+					1.01), 0.20, tail_dur, 6}
 			}
 			if rng.chance(0.45 + energy * 0.30) {
 				out << VoiceLayer{1, f * 1.99, f * 1.8, 0.20, int(f32(base_dur) * 0.55), int(rng.next_u32() % 12)}
@@ -287,28 +409,40 @@ pub fn plan_layers(event core.SoundEvent, synth_cfg SynthConfig) []VoiceLayer {
 		'cluster' {
 			min_steps := clamp_i(synth_cfg.cluster_steps_min, 2, 16)
 			max_steps := clamp_i(synth_cfg.cluster_steps_max, min_steps, 24)
-			steps := min_steps + int(rng.next_u32() % u32(max_steps - min_steps + 1))
-			spacing_lo := clamp_i(synth_cfg.cluster_spacing_min_ms, 1, 80)
-			spacing_hi := clamp_i(synth_cfg.cluster_spacing_max_ms, spacing_lo, 120)
+			mut steps := min_steps + int(rng.next_u32() % u32(max_steps - min_steps + 1))
+			// Occasional long-form cluster: extend the run length beyond profile defaults.
+			if rng.chance(0.28 + energy * 0.26) {
+				long_max := clamp_i(max_steps + 10, min_steps, 32)
+				steps = min_steps + int(rng.next_u32() % u32(long_max - min_steps + 1))
+			}
 			base_f := rng.range_f32(900, 2100)
 			mut acc_delay := 0
 			for i in 0 .. steps {
 				j := f32(i)
-				mut step_ms := spacing_lo + int(rng.next_u32() % u32(spacing_hi - spacing_lo + 1))
-				if rng.chance(0.32) {
-					step_ms = 1 + int(rng.next_u32() % 3)
-				} else if rng.chance(0.18) {
-					step_ms += 5 + int(rng.next_u32() % 9)
+				// Intra-cluster articulation: tiny hits plus occasional accented longer hits.
+				mut hit_ms := 4 + int(rng.next_u32() % 16)
+				if rng.chance(0.26) {
+					hit_ms = 20 + int(rng.next_u32() % 70)
 				}
-				acc_delay += step_ms
+				if rng.chance(0.14 + energy * 0.10) {
+					hit_ms = 90 + int(rng.next_u32() % 161)
+				}
+				if hit_ms < 4 {
+					hit_ms = 4
+				}
+				if hit_ms > 250 {
+					hit_ms = 250
+				}
 				out << VoiceLayer{
 					waveform:    0
 					freq0:       base_f + j * rng.range_f32(20, 140)
 					freq1:       base_f + j * rng.range_f32(10, 90)
-					gain_mul:    0.20 + energy * 0.42 - j * 0.028
-					duration_ms: 6 + int(rng.next_u32() % 8)
+					gain_mul:    0.22 + energy * 0.44 - j * 0.026
+					duration_ms: hit_ms
 					delay_ms:    acc_delay
 				}
+				// Gapless cluster: each note starts immediately after the previous note.
+				acc_delay += hit_ms
 			}
 		}
 		'run' {
@@ -356,5 +490,6 @@ pub fn plan_layers(event core.SoundEvent, synth_cfg SynthConfig) []VoiceLayer {
 		}
 	}
 
+	add_active_cacophony(mut out, event.motif, energy, mut rng)
 	return out
 }

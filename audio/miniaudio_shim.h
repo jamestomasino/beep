@@ -10,7 +10,7 @@
 #include "miniaudio.h"
 
 #ifndef BEEP_MAX_VOICES
-#define BEEP_MAX_VOICES 64
+#define BEEP_MAX_VOICES 160
 #endif
 
 #ifndef BEEP_MAX_SAMPLES
@@ -212,6 +212,34 @@ static inline void beep_audio_shutdown(void) {
 	g_beep.initialized = 0;
 }
 
+static inline int beep_find_voice_slot(void) {
+	int slot = -1;
+	for (int i = 0; i < BEEP_MAX_VOICES; i++) {
+		if (!g_beep.voices[i].active) {
+			return i;
+		}
+	}
+
+	// If saturated, steal the least-audible voice rather than dropping the new layer.
+	float best_score = 999999.0f;
+	for (int i = 0; i < BEEP_MAX_VOICES; i++) {
+		beep_voice_t* v = &g_beep.voices[i];
+		if (!v->active || v->total_frames <= 0) {
+			return i;
+		}
+		float life = (float)v->remaining_frames / (float)v->total_frames;
+		if (life < 0.0f) life = 0.0f;
+		if (life > 1.0f) life = 1.0f;
+		float delay_penalty = (v->start_delay_frames > 0) ? 0.20f : 0.0f;
+		float score = (v->gain * (0.30f + life)) + delay_penalty;
+		if (score < best_score) {
+			best_score = score;
+			slot = i;
+		}
+	}
+	return slot;
+}
+
 static inline int beep_audio_enqueue_ex(int waveform, float freq0, float freq1, float gain, int duration_ms, int delay_ms, uint32_t seed) {
 	if (!g_beep.initialized) {
 		return 0;
@@ -227,13 +255,7 @@ static inline int beep_audio_enqueue_ex(int waveform, float freq0, float freq1, 
 	if (delay_frames < 0) delay_frames = 0;
 
 	pthread_mutex_lock(&g_beep.mu);
-	int slot = -1;
-	for (int i = 0; i < BEEP_MAX_VOICES; i++) {
-		if (!g_beep.voices[i].active) {
-			slot = i;
-			break;
-		}
-	}
+	int slot = beep_find_voice_slot();
 	if (slot == -1) {
 		pthread_mutex_unlock(&g_beep.mu);
 		return 0;
@@ -330,13 +352,7 @@ static inline int beep_audio_enqueue_sample_ex(int sample_index, float gain, int
 	if (delay_frames < 0) delay_frames = 0;
 
 	pthread_mutex_lock(&g_beep.mu);
-	int slot = -1;
-	for (int i = 0; i < BEEP_MAX_VOICES; i++) {
-		if (!g_beep.voices[i].active) {
-			slot = i;
-			break;
-		}
-	}
+	int slot = beep_find_voice_slot();
 	if (slot == -1) {
 		pthread_mutex_unlock(&g_beep.mu);
 		return 0;
