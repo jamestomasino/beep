@@ -77,7 +77,7 @@ static void quit_beep(GtkMenuItem *item, gpointer user_data) {
   (void)item;
   AppCtx *ctx = (AppCtx *)user_data;
   char *quoted = shell_quote(ctx->beep_bin);
-  char *cmd = g_strdup_printf("%s --ctl=quit", quoted);
+  char *cmd = g_strdup_printf("env -u LD_LIBRARY_PATH %s --ctl=quit", quoted);
   spawn_cmd(cmd);
   g_free(cmd);
   g_free(quoted);

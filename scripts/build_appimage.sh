@@ -121,7 +121,7 @@ if command -v convert >/dev/null 2>&1; then
     -fill '#dff4ff' -draw 'rectangle 140,118 172,150' \
     -fill '#79d6ff' -draw 'rectangle 112,24 144,48' \
     -fill '#79d6ff' -draw 'rectangle 106,16 150,24' \
-    "$APPDIR/usr/share/icons/hicolor/256x256/apps/beep.png"
+    "PNG8:$APPDIR/usr/share/icons/hicolor/256x256/apps/beep.png"
 else
   cat > "$APPDIR/usr/share/icons/hicolor/256x256/apps/beep.svg" <<'SVG'
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
@@ -137,6 +137,8 @@ SVG
 fi
 
 "$LINUXDEPLOY_BIN" --appimage-extract-and-run --appdir "$APPDIR" -d "$APPDIR/usr/share/applications/io.github.jamestomasino.beep.desktop" -i "$APPDIR/usr/share/icons/hicolor/256x256/apps/beep.png"
+# linuxdeploy may rewrite ELF metadata; keep the original daemon binary to avoid runtime instability.
+cp "$ROOT/beep" "$APPDIR/usr/bin/beep"
 "$APPIMAGETOOL_BIN" --appimage-extract-and-run "$APPDIR" "$OUTDIR/beep-x86_64.AppImage"
 
 echo "Built: $OUTDIR/beep-x86_64.AppImage"

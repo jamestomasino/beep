@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SELF_PATH="$0"
+if command -v readlink >/dev/null 2>&1; then
+  RESOLVED="$(readlink -f "$0" 2>/dev/null || true)"
+  if [[ -n "${RESOLVED:-}" ]]; then
+    SELF_PATH="$RESOLVED"
+  fi
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-BEEP_BIN="${BEEP_BIN:-$ROOT_DIR/beep}"
-if [[ ! -x "$BEEP_BIN" ]]; then
-  BEEP_BIN="beep"
+# Resolve beep binary for both source-tree and AppImage layouts.
+if [[ -z "${BEEP_BIN:-}" ]]; then
+  if [[ -x "$SCRIPT_DIR/beep" ]]; then
+    BEEP_BIN="$SCRIPT_DIR/beep"
+  elif [[ -x "$ROOT_DIR/beep" ]]; then
+    BEEP_BIN="$ROOT_DIR/beep"
+  elif command -v beep >/dev/null 2>&1; then
+    BEEP_BIN="$(command -v beep)"
+  else
+    echo "Could not locate beep binary. Tried: $SCRIPT_DIR/beep, $ROOT_DIR/beep, PATH" >&2
+    exit 1
+  fi
 fi
 
 IPC_ADDR="${BEEP_IPC_ADDR:-127.0.0.1:48777}"
@@ -15,9 +32,13 @@ URL="http://$UI_ADDR/"
 export BEEP_IPC_ADDR="$IPC_ADDR"
 export BEEP_UI_ADDR="$UI_ADDR"
 
+beep_cmd() {
+  env -u LD_LIBRARY_PATH "$BEEP_BIN" "$@"
+}
+
 ensure_daemon() {
-  if ! "$BEEP_BIN" --ctl=get_state >/dev/null 2>&1; then
-    "$BEEP_BIN" >/tmp/beep-daemon.log 2>&1 &
+  if ! beep_cmd --ctl=get_state >/dev/null 2>&1; then
+    beep_cmd >/tmp/beep-daemon.log 2>&1 &
     sleep 1
   fi
 }
@@ -30,7 +51,7 @@ open_ui() {
 }
 
 stop_daemon() {
-  "$BEEP_BIN" --ctl=quit >/dev/null 2>&1 || true
+  beep_cmd --ctl=quit >/dev/null 2>&1 || true
   echo "beep stop requested"
 }
 
@@ -133,27 +154,28 @@ if run_appindicator_tray; then
 fi
 
 if command -v yad >/dev/null 2>&1; then
+  BEEP_CTL="env -u LD_LIBRARY_PATH $BEEP_BIN"
   MENU="Open Controls!xdg-open $URL"
-  MENU+="|Toggle Enabled!$BEEP_BIN --ctl=toggle:enabled"
-  MENU+="|Profile Normal!$BEEP_BIN --ctl=set:profile=normal"
-  MENU+="|Profile Calm!$BEEP_BIN --ctl=set:profile=calm"
-  MENU+="|Profile Noisy!$BEEP_BIN --ctl=set:profile=noisy"
-  MENU+="|Vol 25%!$BEEP_BIN --ctl=set:master_volume=0.25"
-  MENU+="|Vol 50%!$BEEP_BIN --ctl=set:master_volume=0.50"
-  MENU+="|Vol 75%!$BEEP_BIN --ctl=set:master_volume=0.75"
-  MENU+="|Vol 100%!$BEEP_BIN --ctl=set:master_volume=1.00"
-  MENU+="|Ambient Low!$BEEP_BIN --ctl=set:ambient_level=0.40"
-  MENU+="|Ambient Mid!$BEEP_BIN --ctl=set:ambient_level=0.70"
-  MENU+="|Ambient Full!$BEEP_BIN --ctl=set:ambient_level=1.00"
-  MENU+="|Burst Sparse!$BEEP_BIN --ctl=set:burst_density=0.30"
-  MENU+="|Burst Medium!$BEEP_BIN --ctl=set:burst_density=0.60"
-  MENU+="|Burst Dense!$BEEP_BIN --ctl=set:burst_density=1.00"
-  MENU+="|CPU Source!$BEEP_BIN --ctl=toggle:enable_cpu"
-  MENU+="|System Source!$BEEP_BIN --ctl=toggle:enable_system"
-  MENU+="|Network Source!$BEEP_BIN --ctl=toggle:enable_network"
-  MENU+="|Debug Events!$BEEP_BIN --ctl=toggle:log_events"
-  MENU+="|Save Config!$BEEP_BIN --ctl=save_config"
-  MENU+="|Quit Beep!$BEEP_BIN --ctl=quit"
+  MENU+="|Toggle Enabled!$BEEP_CTL --ctl=toggle:enabled"
+  MENU+="|Profile Normal!$BEEP_CTL --ctl=set:profile=normal"
+  MENU+="|Profile Calm!$BEEP_CTL --ctl=set:profile=calm"
+  MENU+="|Profile Noisy!$BEEP_CTL --ctl=set:profile=noisy"
+  MENU+="|Vol 25%!$BEEP_CTL --ctl=set:master_volume=0.25"
+  MENU+="|Vol 50%!$BEEP_CTL --ctl=set:master_volume=0.50"
+  MENU+="|Vol 75%!$BEEP_CTL --ctl=set:master_volume=0.75"
+  MENU+="|Vol 100%!$BEEP_CTL --ctl=set:master_volume=1.00"
+  MENU+="|Ambient Low!$BEEP_CTL --ctl=set:ambient_level=0.40"
+  MENU+="|Ambient Mid!$BEEP_CTL --ctl=set:ambient_level=0.70"
+  MENU+="|Ambient Full!$BEEP_CTL --ctl=set:ambient_level=1.00"
+  MENU+="|Burst Sparse!$BEEP_CTL --ctl=set:burst_density=0.30"
+  MENU+="|Burst Medium!$BEEP_CTL --ctl=set:burst_density=0.60"
+  MENU+="|Burst Dense!$BEEP_CTL --ctl=set:burst_density=1.00"
+  MENU+="|CPU Source!$BEEP_CTL --ctl=toggle:enable_cpu"
+  MENU+="|System Source!$BEEP_CTL --ctl=toggle:enable_system"
+  MENU+="|Network Source!$BEEP_CTL --ctl=toggle:enable_network"
+  MENU+="|Debug Events!$BEEP_CTL --ctl=toggle:log_events"
+  MENU+="|Save Config!$BEEP_CTL --ctl=save_config"
+  MENU+="|Quit Beep!$BEEP_CTL --ctl=quit"
 
   exec yad --notification \
     --image="computer" \
