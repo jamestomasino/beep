@@ -517,26 +517,6 @@ package body Beep.Platform.Samplers is
                    Cpu_Bucket => Idle));
             end if;
 
-            --  Keep a gentle background stream when system load/memory are elevated.
-            if Mem_Now > 0.55 then
-               Add_Sample
-                 (Batch,
-                  (Kind => Memory,
-                   Intensity => Clamp01 (0.20 + Mem_Now * 0.55),
-                   Timestamp => Timestamp,
-                   Source => To_Unbounded_String ("darwin.memory_pressure.level"),
-                   Cpu_Bucket => Idle));
-            end if;
-            if Load_Now > 0.80 then
-               Add_Sample
-                 (Batch,
-                  (Kind => Beep.Core.Types.System,
-                   Intensity => Clamp01 (0.22 + Load_Now / 6.0),
-                   Timestamp => Timestamp,
-                   Source => To_Unbounded_String ("darwin.sysctl.loadavg.level"),
-                   Cpu_Bucket => Idle));
-            end if;
-
             Sampler.Prev_Processes := Proc_Now;
             Sampler.Prev_Memory_Used := Mem_Now;
             Sampler.Prev_Load_1 := Load_Now;
