@@ -4,6 +4,7 @@ with Interfaces.C;
 with System;
 
 package Beep.Linux.Samplers is
+   --  Lightweight Linux samplers for /proc and X11 activity.
    type Cpu_Sampler is private;
    type System_Sampler is private;
    type Net_Sampler is private;
@@ -12,40 +13,52 @@ package Beep.Linux.Samplers is
    type Optional_Activity_Sample is private;
    type Activity_Batch is private;
 
+   --  Initialize all sampler state from current system snapshot.
    procedure Initialize
      (Cpu    : out Cpu_Sampler;
       Sys    : out System_Sampler;
       Net    : out Net_Sampler;
       X11    : out X11_Sampler);
 
+   --  Release X11 resources, if active.
    procedure Shutdown (Sampler : in out X11_Sampler);
 
+   --  Poll /proc/stat and emit normalized CPU activity when primed.
    function Poll_Cpu
      (Sampler   : in out Cpu_Sampler;
       Cfg       : Beep.Core.Types.Engine_Config;
       Debug     : Boolean;
       Timestamp : Beep.Core.Types.Milliseconds) return Optional_Activity_Sample;
 
+   --  Poll process/memory/load/disk/psi sources and return up to six samples.
    function Poll_System
      (Sampler   : in out System_Sampler;
       Timestamp : Beep.Core.Types.Milliseconds) return Activity_Batch;
 
+   --  Poll /proc/net/dev and emit normalized network activity when primed.
    function Poll_Net
      (Sampler   : in out Net_Sampler;
       Timestamp : Beep.Core.Types.Milliseconds) return Optional_Activity_Sample;
 
+   --  Poll X11 pointer/keymap deltas and return 0..2 activity samples.
    function Poll_X11
      (Sampler   : in out X11_Sampler;
       Timestamp : Beep.Core.Types.Milliseconds) return Activity_Batch;
 
+   --  True when X11 sampler is connected to a usable display.
    function X11_Active (Sampler : X11_Sampler) return Boolean;
 
+   --  Optional sample helpers.
    function Has_Value (Sample : Optional_Activity_Sample) return Boolean;
-   function Value (Sample : Optional_Activity_Sample) return Beep.Core.Types.Activity_Sample;
+   function Value (Sample : Optional_Activity_Sample) return Beep.Core.Types.Activity_Sample
+     with Pre => Has_Value (Sample);
 
+   --  Batch helpers.
    function Count (Batch : Activity_Batch) return Natural;
-   function Item (Batch : Activity_Batch; Index : Positive) return Beep.Core.Types.Activity_Sample;
+   function Item (Batch : Activity_Batch; Index : Positive) return Beep.Core.Types.Activity_Sample
+     with Pre => Index <= Count (Batch);
 
+   --  Monotonic milliseconds for scheduling and timestamps.
    function Now_Ms return Beep.Core.Types.Milliseconds;
 
 private

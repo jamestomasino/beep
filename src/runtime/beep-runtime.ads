@@ -1,2 +1,3 @@
+--  Runtime namespace package.
 package Beep.Runtime is
 end Beep.Runtime;

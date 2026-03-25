@@ -2,11 +2,15 @@ with Ada.Strings.Unbounded;
 with Interfaces;
 
 package Beep.Core.Types is
+   --  Monotonic timestamp in milliseconds.
    subtype Milliseconds is Long_Long_Integer;
 
+   --  Activity source categories sampled from the OS.
    type Activity_Kind is (Keyboard, Mouse, Cpu, Process, Memory, System, Network);
+   --  Coarse CPU utilization bucket used by mapping rules.
    type Cpu_Bucket is (Idle, Active, Busy);
 
+   --  Symbolic motifs produced by the mapper and rendered by audio backends.
    type Motif_Type is (
       Bip,
       Chirp,
@@ -27,6 +31,8 @@ package Beep.Core.Types is
       Tsk
    );
 
+   --  Normalized activity input sampled from OS probes.
+   --  Intensity is expected to be in [0.0, 1.0].
    type Activity_Sample is record
       Kind       : Activity_Kind;
       Intensity  : Float;
@@ -35,6 +41,7 @@ package Beep.Core.Types is
       Cpu_Bucket : Beep.Core.Types.Cpu_Bucket := Idle;
    end record;
 
+   --  Single scheduled sound event emitted by mapping.
    type Sound_Event is record
       Motif       : Motif_Type;
       Gain        : Float;
@@ -43,11 +50,14 @@ package Beep.Core.Types is
       Timestamp   : Milliseconds;
    end record;
 
+   --  Optional wrapper used to avoid dynamic allocation.
    type Optional_Sound_Event is record
       Has_Value : Boolean := False;
       Value     : Sound_Event;
    end record;
 
+   --  Mapping and density tuning parameters.
+   --  Chance and threshold values are nominally in [0.0, 1.0].
    type Engine_Config is record
       Keyboard_Threshold        : Float := 0.25;
       Mouse_Threshold           : Float := 0.20;
@@ -84,6 +94,7 @@ package Beep.Core.Types is
       Cooldown_Ms               : Milliseconds := 180;
    end record;
 
+   --  Mutable engine state carried across samples.
    type Engine_State is record
       Last_Emit_Ms   : Milliseconds := 0;
       Last_Sample_Ms : Milliseconds := 0;
@@ -93,7 +104,10 @@ package Beep.Core.Types is
       Rng_State      : Interfaces.Unsigned_32 := 16#9E3779B9#;
    end record;
 
+   --  Returns a deterministic default-initialized state.
    function New_State return Engine_State;
+   --  Returns baseline tuning for activity-to-motif mapping.
    function Default_Engine_Config return Engine_Config;
+   --  Stable text representation used in logs/debug output.
    function Motif_Image (Motif : Motif_Type) return String;
 end Beep.Core.Types;
