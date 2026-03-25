@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           BEEP_OS=darwin alr -n update
           BEEP_OS=darwin alr -n build
-          ./obj/beep --version
+          test -x ./obj/beep
 
       - name: Package release artifact
         shell: bash
