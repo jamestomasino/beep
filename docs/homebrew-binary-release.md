@@ -12,8 +12,8 @@ git push origin v0.1.0
 ```
 
 2. GitHub Actions workflow `release-macos` builds:
-- `darwin-arm64` on `macos-14`
-- `darwin-x86_64` on `macos-13`
+- `darwin-arm64` on `macos-15`
+- `darwin-x86_64` on `macos-15-intel`
 
 3. Workflow publishes release assets:
 - `beep-v0.1.0-darwin-arm64.tar.gz`
