@@ -1,6 +1,8 @@
 # beep
 
-`beep` is a Linux-first Ada CLI that turns system and activity signals into a layered ambient soundscape. *beep beep*
+`beep` is a Linux-first Ada CLI that turns system and activity signals into a layered ambient soundscape. 
+
+*beep beep*
 
 It currently combines:
 - Linux `/proc` samplers (CPU/system/network/load/disk/pressure)
