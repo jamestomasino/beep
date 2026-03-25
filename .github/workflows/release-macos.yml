@@ -84,10 +84,80 @@ jobs:
             package/*.tar.gz
             package/*.sha256
 
+  build-linux:
+    name: Build Linux (x86_64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gnat gprbuild libx11-dev libasound2-dev curl unzip
+
+      - name: Install Alire
+        shell: bash
+        run: |
+          set -euo pipefail
+          download_url="https://github.com/alire-project/alire/releases/download/v${ALIRE_VERSION}/alr-${ALIRE_VERSION}-bin-x86_64-linux.zip"
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --location "$download_url" -o alr.zip
+          unzip -q alr.zip bin/alr
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 bin/alr "$HOME/.local/bin/alr"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          alr --version
+          gprbuild --version
+
+      - name: Build beep
+        shell: bash
+        run: |
+          set -euo pipefail
+          alr -n update
+          alr -n build
+          test -x ./obj/beep
+
+      - name: Package release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          base="beep-${tag}-linux-x86_64"
+
+          rm -rf package
+          mkdir -p "package/${base}/bin"
+          install -m 0755 ./obj/beep "package/${base}/bin/beep"
+          cp README.md "package/${base}/README.md"
+
+          tar -C package -czf "package/${base}.tar.gz" "${base}"
+          sha256sum "package/${base}.tar.gz" > "package/${base}.sha256"
+
+      - name: Upload artifact bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-linux-x86_64
+          path: |
+            package/*.tar.gz
+            package/*.sha256
+
   publish-release:
     name: Publish GitHub release
     runs-on: ubuntu-latest
-    needs: build-macos
+    needs:
+      - build-macos
+      - build-linux
     permissions:
       contents: write
 
