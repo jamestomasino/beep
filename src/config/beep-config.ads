@@ -2,6 +2,15 @@ with Ada.Strings.Unbounded;
 with Beep.Core.Types;
 
 package Beep.Config is
+   type Audio_Mix_Config is record
+      Ambient_Bed_Drive         : Float := 0.32;
+      Ambient_Bed_Max           : Float := 0.30;
+      Ambient_Bed_Decay         : Float := 0.992;
+      Mid_Blend_Min             : Float := 0.16;
+      Mid_Blend_Max             : Float := 0.52;
+      Mid_Foreground_Attenuation : Float := 0.55;
+   end record;
+
    type Signal_Config is record
       Keyboard_Weight   : Float := 1.15;
       Mouse_Weight      : Float := 1.10;
@@ -61,6 +70,7 @@ package Beep.Config is
       Master_Volume    : Float := 1.0;
       Ambient_Level    : Float := 1.0;
       Burst_Density    : Float := 1.0;
+      Audio_Mix       : Audio_Mix_Config := (others => <>);
       Log_Stats        : Boolean := False;
       Stats_Interval_Ms : Integer := 1000;
       Signal           : Signal_Config := (others => <>);

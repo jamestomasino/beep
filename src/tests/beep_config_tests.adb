@@ -40,6 +40,9 @@ procedure Beep_Config_Tests is
       Ada.Text_IO.Put_Line (F, "signal_keyboard_weight=1.35");
       Ada.Text_IO.Put_Line (F, "signal_mouse_min_gap_ms=9");
       Ada.Text_IO.Put_Line (F, "signal_loadavg_weight=0.66");
+      Ada.Text_IO.Put_Line (F, "audio_mix_ambient_bed_max=0.34");
+      Ada.Text_IO.Put_Line (F, "audio_mix_ambient_bed_decay=0.989");
+      Ada.Text_IO.Put_Line (F, "audio_mix_mid_blend_min=0.20");
       Ada.Text_IO.Close (F);
 
       Cfg := Beep.Config.Load_File (Temp_Path, Cfg);
@@ -52,6 +55,9 @@ procedure Beep_Config_Tests is
       Expect (abs (Cfg.Signal.Keyboard_Weight - 1.35) < 0.0001, "signal_keyboard_weight parse failed");
       Expect (Cfg.Signal.Mouse_Min_Gap_Ms = 9, "signal_mouse_min_gap_ms parse failed");
       Expect (abs (Cfg.Signal.Loadavg_Weight - 0.66) < 0.0001, "signal_loadavg_weight parse failed");
+      Expect (abs (Cfg.Audio_Mix.Ambient_Bed_Max - 0.34) < 0.0001, "audio_mix_ambient_bed_max parse failed");
+      Expect (abs (Cfg.Audio_Mix.Ambient_Bed_Decay - 0.989) < 0.0001, "audio_mix_ambient_bed_decay parse failed");
+      Expect (abs (Cfg.Audio_Mix.Mid_Blend_Min - 0.20) < 0.0001, "audio_mix_mid_blend_min parse failed");
 
       if Ada.Directories.Exists (Temp_Path) then
          Ada.Directories.Delete_File (Temp_Path);

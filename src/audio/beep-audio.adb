@@ -179,28 +179,99 @@ package body Beep.Audio is
       return Motif = Drone or else Motif = Hum or else Motif = Pad;
    end Is_Ambient_Motif;
 
-   function Mid_Blend_For_Motif (Motif : Motif_Type; Timestamp : Milliseconds) return Float is
+   function Mid_Blend_For_Motif
+     (Motif     : Motif_Type;
+      Timestamp : Milliseconds;
+      Mid_Min   : Float;
+      Mid_Max   : Float) return Float
+   is
       Jitter : constant Float := Float ((Timestamp mod 17) + 1) / 18.0;
+      Base   : Float;
    begin
       case Motif is
          when Tick | Tsk | Zap =>
-            return 0.16 + Jitter * 0.18;
+            Base := 0.16 + Jitter * 0.18;
          when Cluster | Run | Stutter =>
-            return 0.28 + Jitter * 0.24;
+            Base := 0.28 + Jitter * 0.24;
          when Chirp | Bip | Bloop | Yip =>
-            return 0.20 + Jitter * 0.24;
+            Base := 0.20 + Jitter * 0.24;
          when Wheee | Whirr | Warble | Wobble =>
-            return 0.26 + Jitter * 0.26;
+            Base := 0.26 + Jitter * 0.26;
          when others =>
-            return 0.24;
+            Base := 0.24;
       end case;
+      return Mid_Min + (Mid_Max - Mid_Min) * Clamp01 (Base);
    end Mid_Blend_For_Motif;
 
+   protected type Mix_Params is
+      procedure Set (Cfg : Beep.Config.Audio_Mix_Config);
+      procedure Get
+        (Ambient_Drive : out Float;
+         Ambient_Max   : out Float;
+         Ambient_Decay : out Float;
+         Mid_Min       : out Float;
+         Mid_Max       : out Float;
+         Fore_Attn     : out Float);
+   private
+      Drive_Param : Float := 0.32;
+      Max_Param   : Float := 0.30;
+      Decay_Param : Float := 0.992;
+      Mid_Min_P   : Float := 0.16;
+      Mid_Max_P   : Float := 0.52;
+      Fore_Attn_P : Float := 0.55;
+   end Mix_Params;
+
+   protected body Mix_Params is
+      procedure Set (Cfg : Beep.Config.Audio_Mix_Config) is
+      begin
+         Drive_Param := Clamp01 (Cfg.Ambient_Bed_Drive);
+         Max_Param := Clamp01 (Cfg.Ambient_Bed_Max);
+         if Max_Param < 0.02 then
+            Max_Param := 0.02;
+         end if;
+
+         if Cfg.Ambient_Bed_Decay > 0.0 and then Cfg.Ambient_Bed_Decay < 1.0 then
+            Decay_Param := Cfg.Ambient_Bed_Decay;
+         end if;
+
+         Mid_Min_P := Clamp01 (Cfg.Mid_Blend_Min);
+         Mid_Max_P := Clamp01 (Cfg.Mid_Blend_Max);
+         if Mid_Max_P < Mid_Min_P then
+            declare
+               Tmp : constant Float := Mid_Max_P;
+            begin
+               Mid_Max_P := Mid_Min_P;
+               Mid_Min_P := Tmp;
+            end;
+         end if;
+
+         Fore_Attn_P := Clamp01 (Cfg.Mid_Foreground_Attenuation);
+      end Set;
+
+      procedure Get
+        (Ambient_Drive : out Float;
+         Ambient_Max   : out Float;
+         Ambient_Decay : out Float;
+         Mid_Min       : out Float;
+         Mid_Max       : out Float;
+         Fore_Attn     : out Float)
+      is
+      begin
+         Ambient_Drive := Drive_Param;
+         Ambient_Max := Max_Param;
+         Ambient_Decay := Decay_Param;
+         Mid_Min := Mid_Min_P;
+         Mid_Max := Mid_Max_P;
+         Fore_Attn := Fore_Attn_P;
+      end Get;
+   end Mix_Params;
+
    G_Ambient_Phase : Float := 0.0;
+   Mix : Mix_Params;
 
    protected type Ambient_Control is
-      procedure Drive (Motif : Motif_Type; Gain : Float);
-      procedure Snapshot (Freq : out Float; Gain : out Float);
+      procedure Drive (Motif : Motif_Type; Gain : Float; Drive_Scale : Float; Max_Level : Float);
+      procedure Snapshot (Freq : out Float; Gain : out Float; Decay : Float);
       procedure Reset;
    private
       Target_Freq  : Float := 92.0;
@@ -209,8 +280,8 @@ package body Beep.Audio is
    end Ambient_Control;
 
    protected body Ambient_Control is
-      procedure Drive (Motif : Motif_Type; Gain : Float) is
-         Driven : Float := Clamp01 (Gain) * 0.32;
+      procedure Drive (Motif : Motif_Type; Gain : Float; Drive_Scale : Float; Max_Level : Float) is
+         Driven : Float := Clamp01 (Gain) * Drive_Scale;
       begin
          case Motif is
             when Drone =>
@@ -232,15 +303,15 @@ package body Beep.Audio is
             Level := Level + (Driven - Level) * 0.30;
          end if;
 
-         if Level > 0.30 then
-            Level := 0.30;
+         if Level > Max_Level then
+            Level := Max_Level;
          end if;
       end Drive;
 
-      procedure Snapshot (Freq : out Float; Gain : out Float) is
+      procedure Snapshot (Freq : out Float; Gain : out Float; Decay : Float) is
       begin
          Current_Freq := Current_Freq + (Target_Freq - Current_Freq) * 0.10;
-         Level := Level * 0.992;
+         Level := Level * Decay;
          if Level < 0.001 then
             Level := 0.0;
          end if;
@@ -271,7 +342,10 @@ package body Beep.Audio is
       Event  : Sound_Event;
       Gain   : Float;
       Ambient_Freq : Float := 0.0;
-      Ambient_Gain : Float := 0.0)
+      Ambient_Gain : Float := 0.0;
+      Mid_Min      : Float := 0.16;
+      Mid_Max      : Float := 0.52;
+      Fore_Attn    : Float := 0.55)
    is
       Duration_Ms : constant Positive := Effective_Duration_Ms (Event);
       Frames      : constant Positive := Positive (Integer (Engine.Sample_Rate) * Duration_Ms / 1000);
@@ -282,8 +356,8 @@ package body Beep.Audio is
       Rate_F      : constant Float := Float (Engine.Sample_Rate);
       Written     : long;
       Ambient_Phase_Step : constant Float := Two_Pi * Ambient_Freq / Rate_F;
-      Mid_Blend   : constant Float := Mid_Blend_For_Motif (Event.Motif, Event.Timestamp);
-      Fore_Blend  : constant Float := 1.0 - Mid_Blend * 0.55;
+      Mid_Blend   : constant Float := Mid_Blend_For_Motif (Event.Motif, Event.Timestamp, Mid_Min, Mid_Max);
+      Fore_Blend  : constant Float := 1.0 - Mid_Blend * Fore_Attn;
    begin
       for I in Buffer'Range loop
          declare
@@ -404,6 +478,12 @@ package body Beep.Audio is
       Shadow : Audio_Engine;
       Ambient_Freq : Float := 0.0;
       Ambient_Gain : Float := 0.0;
+      Ambient_Drive : Float := 0.32;
+      Ambient_Max   : Float := 0.30;
+      Ambient_Decay : Float := 0.992;
+      Mid_Min       : Float := 0.16;
+      Mid_Max       : Float := 0.52;
+      Fore_Attn     : Float := 0.55;
    begin
       loop
          select
@@ -420,20 +500,22 @@ package body Beep.Audio is
                      if G_Alsa_Handle = System.Null_Address then
                         Emit_Bell (Item.Event.Gain);
                      else
-                        Ambient.Snapshot (Ambient_Freq, Ambient_Gain);
+                        Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+                        Ambient.Snapshot (Ambient_Freq, Ambient_Gain, Ambient_Decay);
                         Shadow :=
                           (Backend => G_Backend,
                            Alsa_Handle => G_Alsa_Handle,
                            Sample_Rate => G_Sample_Rate,
                            Active => G_Active);
-                        Emit_Alsa (Shadow, Item.Event, Item.Event.Gain, Ambient_Freq, Ambient_Gain);
+                        Emit_Alsa (Shadow, Item.Event, Item.Event.Gain, Ambient_Freq, Ambient_Gain, Mid_Min, Mid_Max, Fore_Attn);
                      end if;
                end case;
             end if;
          or
             delay 0.05;
             if G_Active and then G_Backend = Alsa_Backend and then G_Alsa_Handle /= System.Null_Address then
-               Ambient.Snapshot (Ambient_Freq, Ambient_Gain);
+               Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+               Ambient.Snapshot (Ambient_Freq, Ambient_Gain, Ambient_Decay);
                if Ambient_Gain > 0.003 then
                   Shadow :=
                     (Backend => G_Backend,
@@ -458,6 +540,7 @@ package body Beep.Audio is
       Engine := (others => <>);
       Engine.Backend := Requested;
       Queue.Start;
+      Mix.Set (Cfg.Audio_Mix);
       G_Backend := Requested;
       G_Alsa_Handle := System.Null_Address;
       G_Sample_Rate := Engine.Sample_Rate;
@@ -519,20 +602,37 @@ package body Beep.Audio is
       G_Active := True;
    end Initialize;
 
+   procedure Reconfigure (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config) is
+   begin
+      if not Engine.Active then
+         return;
+      end if;
+      Mix.Set (Cfg.Audio_Mix);
+   end Reconfigure;
+
    procedure Emit
      (Engine : in out Audio_Engine;
       Cfg    : Beep.Config.App_Config;
       Event  : Sound_Event)
    is
       Q : Sound_Event := Event;
+      Ambient_Drive : Float := 0.32;
+      Ambient_Max   : Float := 0.30;
+      Ambient_Decay : Float := 0.992;
+      Mid_Min       : Float := 0.16;
+      Mid_Max       : Float := 0.52;
+      Fore_Attn     : Float := 0.55;
    begin
       if not Engine.Active then
          return;
       end if;
 
+      Mix.Set (Cfg.Audio_Mix);
       Q.Gain := Clamp01 (Event.Gain * Cfg.Master_Volume);
       if Is_Ambient_Motif (Q.Motif) then
-         Ambient.Drive (Q.Motif, Q.Gain);
+         Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+         pragma Unreferenced (Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
+         Ambient.Drive (Q.Motif, Q.Gain, Ambient_Drive, Ambient_Max);
       end if;
       Queue.Push (Q);
    end Emit;

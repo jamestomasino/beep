@@ -7,6 +7,7 @@ package Beep.Audio is
    type Audio_Engine is private;
 
    procedure Initialize (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config);
+   procedure Reconfigure (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config);
    procedure Emit
      (Engine : in out Audio_Engine;
       Cfg    : Beep.Config.App_Config;

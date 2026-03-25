@@ -2,6 +2,7 @@ with Ada.Exceptions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Beep.Core.Mapping;
+with Beep.Core.Safety;
 with Beep.Core.Types;
 
 procedure Beep_Core_Tests is
@@ -86,10 +87,20 @@ procedure Beep_Core_Tests is
       end if;
    end Test_Min_Gap_Enforced;
 
+   procedure Test_Safety_Clamp is
+      use Beep.Core.Safety;
+   begin
+      Expect (Clamp_Unit (-1.0) = 0.0, "Clamp_Unit low bound failed");
+      Expect (Clamp_Unit (2.0) = 1.0, "Clamp_Unit high bound failed");
+      Expect (Saturating_Scale (0.4, 2.0) = 0.8, "Saturating_Scale simple failed");
+      Expect (Saturating_Scale (0.8, 2.0) = 1.0, "Saturating_Scale saturation failed");
+   end Test_Safety_Clamp;
+
 begin
    Test_Keyboard_Threshold;
    Test_Deterministic_Seeded_Output;
    Test_Min_Gap_Enforced;
+   Test_Safety_Clamp;
    Put_Line ("beep_core_tests: OK");
 exception
    when E : others =>

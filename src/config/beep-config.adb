@@ -304,6 +304,25 @@ package body Beep.Config is
             Cfg.Burst_Density := Clamp01 (F);
          end if;
 
+      elsif K = "audio_mix_ambient_bed_drive" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Audio_Mix.Ambient_Bed_Drive := Clamp01 (F); end if;
+      elsif K = "audio_mix_ambient_bed_max" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Audio_Mix.Ambient_Bed_Max := Clamp01 (F); end if;
+      elsif K = "audio_mix_ambient_bed_decay" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num and then F > 0.0 and then F < 1.0 then Cfg.Audio_Mix.Ambient_Bed_Decay := F; end if;
+      elsif K = "audio_mix_mid_blend_min" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Audio_Mix.Mid_Blend_Min := Clamp01 (F); end if;
+      elsif K = "audio_mix_mid_blend_max" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Audio_Mix.Mid_Blend_Max := Clamp01 (F); end if;
+      elsif K = "audio_mix_mid_foreground_attenuation" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then Cfg.Audio_Mix.Mid_Foreground_Attenuation := Clamp01 (F); end if;
+
       elsif K = "stats_interval_ms" then
          I := Parse_I64 (V, Ok_Num);
          if Ok_Num and then I >= 100 then

@@ -11,6 +11,7 @@ with Beep.Config;
 with Beep.Core.Mapping;
 with Beep.Core.Types;
 with Beep.Linux.Samplers;
+with Beep.Runtime.Signals;
 
 procedure Beep_Main is
    use Ada.Strings.Unbounded;
@@ -206,6 +207,8 @@ procedure Beep_Main is
    Cli_Audio_Null   : Boolean := False;
    Cli_Audio_Bell   : Boolean := False;
 
+   Did_Cleanup : Boolean := False;
+   Stop_Requested : Boolean := False;
    Mapper_State : Engine_State := New_State;
    Last_By_Kind : Kind_Timestamps := (others => 0);
    Event_Counts : Kind_Counts := (others => 0);
@@ -219,6 +222,59 @@ procedure Beep_Main is
    Net_Sampler  : Beep.Linux.Samplers.Net_Sampler;
    X11_Sampler  : Beep.Linux.Samplers.X11_Sampler;
    Audio_Engine : Beep.Audio.Audio_Engine;
+
+   procedure Cleanup is
+   begin
+      if Did_Cleanup then
+         return;
+      end if;
+      Beep.Audio.Shutdown (Audio_Engine);
+      Beep.Linux.Samplers.Shutdown (X11_Sampler);
+      Did_Cleanup := True;
+   end Cleanup;
+
+   procedure Apply_Cli_Overrides (Config : in out Beep.Config.App_Config) is
+   begin
+      if Cli_No_Cpu then Config.Enable_Cpu := False; end if;
+      if Cli_No_System then Config.Enable_System := False; end if;
+      if Cli_No_Net then Config.Enable_Network := False; end if;
+      if Cli_No_X11 then Config.Enable_X11 := False; end if;
+      if Cli_Debug_Events then Config.Log_Events := True; end if;
+      if Cli_Debug_Cpu then Config.Debug_Cpu := True; end if;
+      if Cli_Debug_Fake then Config.Debug_Fake_Input := True; end if;
+      if Cli_Stats then Config.Log_Stats := True; else Config.Log_Stats := False; end if;
+      if Cli_Audio_Null then Config.Audio_Backend := To_Unbounded_String ("null"); end if;
+      if Cli_Audio_Bell then Config.Audio_Backend := To_Unbounded_String ("bell"); end if;
+      Config.Engine.Ambient_Level := Config.Ambient_Level;
+      Config.Engine.Burst_Density := Config.Burst_Density;
+   end Apply_Cli_Overrides;
+
+   procedure Reload_Config_From_Disk (Config : in out Beep.Config.App_Config; Is_Reload : Boolean) is
+      Base : Beep.Config.App_Config := Beep.Config.With_Profile (Beep.Config.Defaults, "normal");
+      Old_Backend : constant String := To_String (Config.Audio_Backend);
+   begin
+      if Ada.Directories.Exists (To_String (Config_Path)) then
+         begin
+            Base := Beep.Config.Load_File (To_String (Config_Path), Base);
+         exception
+            when E : others =>
+               Ada.Text_IO.Put_Line ("[warn] reload failed for config " & To_String (Config_Path) & ": " & Ada.Exceptions.Exception_Message (E));
+         end;
+      end if;
+
+      if Cli_Profile /= Null_Unbounded_String then
+         Base := Beep.Config.With_Profile (Base, To_String (Cli_Profile));
+      end if;
+      Apply_Cli_Overrides (Base);
+      Config := Base;
+      Beep.Audio.Reconfigure (Audio_Engine, Config);
+      if Is_Reload then
+         Ada.Text_IO.Put_Line ("[info] config reloaded from " & To_String (Config_Path));
+      end if;
+      if Is_Reload and then To_String (Config.Audio_Backend) /= Old_Backend then
+         Ada.Text_IO.Put_Line ("[warn] audio backend change requires restart");
+      end if;
+   end Reload_Config_From_Disk;
 
 begin
    if Has_Flag ("--help") or else Has_Flag ("-h") then
@@ -253,31 +309,7 @@ begin
       end;
    end loop;
 
-   if Ada.Directories.Exists (To_String (Config_Path)) then
-      begin
-         Cfg := Beep.Config.Load_File (To_String (Config_Path), Cfg);
-      exception
-         when E : others =>
-            Ada.Text_IO.Put_Line ("[warn] could not parse config " & To_String (Config_Path) & ": " & Ada.Exceptions.Exception_Message (E));
-      end;
-   end if;
-
-   if Cli_Profile /= Null_Unbounded_String then
-      Cfg := Beep.Config.With_Profile (Cfg, To_String (Cli_Profile));
-   end if;
-
-   if Cli_No_Cpu then Cfg.Enable_Cpu := False; end if;
-   if Cli_No_System then Cfg.Enable_System := False; end if;
-   if Cli_No_Net then Cfg.Enable_Network := False; end if;
-   if Cli_No_X11 then Cfg.Enable_X11 := False; end if;
-   if Cli_Debug_Events then Cfg.Log_Events := True; end if;
-   if Cli_Debug_Cpu then Cfg.Debug_Cpu := True; end if;
-   if Cli_Debug_Fake then Cfg.Debug_Fake_Input := True; end if;
-   Cfg.Log_Stats := Cli_Stats;
-   if Cli_Audio_Null then Cfg.Audio_Backend := To_Unbounded_String ("null"); end if;
-   if Cli_Audio_Bell then Cfg.Audio_Backend := To_Unbounded_String ("bell"); end if;
-   Cfg.Engine.Ambient_Level := Cfg.Ambient_Level;
-   Cfg.Engine.Burst_Density := Cfg.Burst_Density;
+   Reload_Config_From_Disk (Cfg, Is_Reload => False);
 
    Ada.Text_IO.Put_Line ("profile=" & To_String (Cfg.Profile)
       & " config=" & To_String (Config_Path)
@@ -289,6 +321,7 @@ begin
 
    Beep.Linux.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler, X11_Sampler);
    Beep.Audio.Initialize (Audio_Engine, Cfg);
+   Beep.Runtime.Signals.Install;
    Ada.Text_IO.Put_Line ("audio-backend=" & Beep.Audio.Backend_Name (Audio_Engine));
    if Cfg.Enable_X11 and then not Beep.Linux.Samplers.X11_Active (X11_Sampler) then
       Ada.Text_IO.Put_Line ("[warn] X11 sampler unavailable (no display or X11 access)");
@@ -306,10 +339,21 @@ begin
 
    Ada.Text_IO.Put_Line ("beep sampler loop started. Ctrl+C to stop.");
    Startup_Ts := Beep.Linux.Samplers.Now_Ms;
-   loop
+   while not Stop_Requested loop
       declare
          Ts : constant Milliseconds := Beep.Linux.Samplers.Now_Ms;
+         Reload_Now : Boolean := False;
+         Stop_Now   : Boolean := False;
       begin
+         Beep.Runtime.Signals.Poll (Reload_Now, Stop_Now);
+         if Reload_Now then
+            Reload_Config_From_Disk (Cfg, Is_Reload => True);
+         end if;
+         if Stop_Now then
+            Stop_Requested := True;
+            exit;
+         end if;
+
          if Cfg.Enable_Cpu then
             declare
                   Sample : constant Beep.Linux.Samplers.Optional_Activity_Sample :=
@@ -380,4 +424,11 @@ begin
 
       delay 0.04;
    end loop;
+
+   Cleanup;
+exception
+   when E : others =>
+      Cleanup;
+      Ada.Text_IO.Put_Line ("[error] beep main failed: " & Ada.Exceptions.Exception_Message (E));
+      raise;
 end Beep_Main;

@@ -14,6 +14,7 @@ tags = ["cli", "linux", "audio", "sonifier"]
 [[depends-on]]
 pkg_config = "*"
 libx11 = "*"
+gnatprove = "*"
 
 # Note: libxi-dev is still needed for XI2 support, but there is no indexed
 # external crate for it in the default community index at the moment.
