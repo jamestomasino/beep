@@ -1,104 +1,31 @@
 # beep
 
-`beep` is a Linux-first V app inspired by classic retro activity sonifiers.
-It runs in the background and maps real machine/input activity to procedural sci-fi sound cues.
+`beep` is a Linux-first Ada CLI project (in migration) for activity-driven sonification.
 
-## Current Scope
+## Build
 
-- Linux runtime
-- X11 global keyboard/mouse sampler (`poll` + optional `xi2`)
-- `/proc` CPU sampler
-- `/proc` system churn sampler (process/context/memory pressure deltas)
-- `/proc` network sampler
-- Event engine with varied motif palettes (not fixed one-source/one-sound mapping)
-- Realtime synthesis via `miniaudio`
-- Optional sample-layer blending from `assets/samples/*.wav`
-- Local control API (`--ctl`) for live runtime changes
-- Tray launcher script (`scripts/beep-tray.sh`)
+```bash
+source ~/.profile
+alr update
+alr build
+```
 
 ## Run
 
 ```bash
-v run .
+./obj/beep_main --help
+./obj/beep_main --profile=noisy --no-cpu --audio-null
 ```
 
-Useful flags:
-
-- `--profile=<calm|normal|noisy>`
-- `--config=<path>`
-- `--no-cpu`
-- `--no-system`
-- `--no-net`
-- `--x11-input` (requires build flag `-d x11_input`)
-- `--no-x11-input`
-- `--x11-mode=<poll|xi2>` (`xi2` requires build flag `-d x11_xi2`)
-- `--debug-events`
-- `--debug-cpu`
-- `--debug-fake-input` (testing only)
-- `--audio-null`
-- `--ipc-addr=<host:port>`
-- `--no-ipc`
-- `--ui-addr=<host:port>`
-- `--no-web-ui`
-- `--ctl=<cmd>` (`get_state`, `quit`, `save_config`, `toggle:<key>`, `set:<key>=<value>`)
-
-Defaults:
-
-- On X11 sessions, global X11 input is auto-enabled when built with `-d x11_input`.
-- On Wayland sessions, `beep` leans on cpu/system/network samplers by default.
-- Built-in control UI is served on `http://127.0.0.1:48778/`.
-
-X11 input build dependencies:
+## Tests
 
 ```bash
-sudo apt install -y libx11-dev
+./obj/beep_core_tests
+./obj/beep_config_tests
 ```
-
-Optional XInput2 backend:
-
-```bash
-sudo apt install -y libxi-dev
-v -d x11_input -d x11_xi2 run . --x11-input --x11-mode=xi2
-```
-
-## Config
-
-Default config path:
-
-`~/.config/beep/config.conf`
-
-See [docs/CONFIG.md](docs/CONFIG.md).
-
-## Tray UI
-
-```bash
-./scripts/beep-tray.sh
-```
-
-For native modern tray integration (AppIndicator), install one of:
-
-```bash
-sudo apt install -y libayatana-appindicator3-dev
-# or
-sudo apt install -y libappindicator3-dev
-```
-
-Quick actions:
-
-- `./scripts/beep-tray.sh --open-ui`
-- `./scripts/beep-tray.sh --stop`
-
-See [docs/TRAY.md](docs/TRAY.md).
-
-## AppImage
-
-```bash
-./scripts/build_appimage.sh
-```
-
-See [docs/PACKAGING.md](docs/PACKAGING.md).
 
 ## Notes
 
-- On Wayland, global input hooks are compositor-specific.
-- Ambient motifs are long-form with slow fade-in/fade-out.
+- System/tool dependencies are declared in `alire.toml`.
+- Current implementation includes Ada core mapping and config parsing with tests.
+- Linux sampler and audio backend ports are next migration steps.

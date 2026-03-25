@@ -1,0 +1,19 @@
+name = "beep"
+description = "CLI activity sonifier (Ada migration)"
+version = "0.1.0-dev"
+
+authors = ["James Tomasino"]
+maintainers = ["James Tomasino <james@example.com>"]
+maintainers-logins = ["jamestomasino"]
+
+executables = ["beep"]
+project-files = ["beep.gpr"]
+
+tags = ["cli", "linux", "audio", "sonifier"]
+
+[[depends-on]]
+pkg_config = "*"
+libx11 = "*"
+
+# Note: libxi-dev is still needed for XI2 support, but there is no indexed
+# external crate for it in the default community index at the moment.

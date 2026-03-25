@@ -10,10 +10,10 @@ beep
 # Ignore binary output folders
 bin/
 build/
-
-# AppImage/tooling scratch
-*.AppImage
-squashfs-root/
+obj/
+alire/
+.alire/
+config/beep_config.*
 
 # Ignore common editor/system specific metadata
 .DS_Store
