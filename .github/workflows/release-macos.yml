@@ -42,6 +42,7 @@ jobs:
             --retry 5 --retry-delay 2 --retry-all-errors \
             --location "$download_url" -o alr.zip
           unzip -q alr.zip bin/alr
+          mkdir -p "$HOME/.local/bin"
           install -m 0755 bin/alr "$HOME/.local/bin/alr"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
