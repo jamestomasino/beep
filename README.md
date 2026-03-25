@@ -13,6 +13,9 @@ It currently combines:
 
 ## Homebrew Install (macOS)
 
+*Note:* This doesn't really work yet. The macOS build will hopefully be working
+soon.
+
 ```bash
 brew tap jamestomasino/beep
 brew install jamestomasino/beep/beep
