@@ -174,6 +174,71 @@ package body Beep.Audio is
       end case;
    end Motif_Frequency;
 
+   function Is_Ambient_Motif (Motif : Motif_Type) return Boolean is
+   begin
+      return Motif = Drone or else Motif = Hum or else Motif = Pad;
+   end Is_Ambient_Motif;
+
+   G_Ambient_Phase : Float := 0.0;
+
+   protected type Ambient_Control is
+      procedure Drive (Motif : Motif_Type; Gain : Float);
+      procedure Snapshot (Freq : out Float; Gain : out Float);
+      procedure Reset;
+   private
+      Target_Freq  : Float := 92.0;
+      Current_Freq : Float := 92.0;
+      Level        : Float := 0.0;
+   end Ambient_Control;
+
+   protected body Ambient_Control is
+      procedure Drive (Motif : Motif_Type; Gain : Float) is
+         Driven : Float := Clamp01 (Gain) * 0.25;
+      begin
+         case Motif is
+            when Drone =>
+               Target_Freq := 82.0;
+               Driven := Driven * 1.00;
+            when Hum =>
+               Target_Freq := 112.0;
+               Driven := Driven * 0.90;
+            when Pad =>
+               Target_Freq := 174.0;
+               Driven := Driven * 0.75;
+            when others =>
+               return;
+         end case;
+
+         if Driven > Level then
+            Level := Driven;
+         else
+            Level := Level + (Driven - Level) * 0.30;
+         end if;
+
+         if Level > 0.22 then
+            Level := 0.22;
+         end if;
+      end Drive;
+
+      procedure Snapshot (Freq : out Float; Gain : out Float) is
+      begin
+         Current_Freq := Current_Freq + (Target_Freq - Current_Freq) * 0.10;
+         Level := Level * 0.992;
+         if Level < 0.001 then
+            Level := 0.0;
+         end if;
+         Freq := Current_Freq;
+         Gain := Level;
+      end Snapshot;
+
+      procedure Reset is
+      begin
+         Target_Freq := 92.0;
+         Current_Freq := 92.0;
+         Level := 0.0;
+      end Reset;
+   end Ambient_Control;
+
    procedure Emit_Bell (Gain : Float) is
       use Ada.Text_IO;
    begin
@@ -187,7 +252,9 @@ package body Beep.Audio is
    procedure Emit_Alsa
      (Engine : in out Audio_Engine;
       Event  : Sound_Event;
-      Gain   : Float)
+      Gain   : Float;
+      Ambient_Freq : Float := 0.0;
+      Ambient_Gain : Float := 0.0)
    is
       Duration_Ms : constant Positive := Effective_Duration_Ms (Event);
       Frames      : constant Positive := Positive (Integer (Engine.Sample_Rate) * Duration_Ms / 1000);
@@ -197,6 +264,7 @@ package body Beep.Audio is
       Two_Pi      : constant Float := 2.0 * Ada.Numerics.Pi;
       Rate_F      : constant Float := Float (Engine.Sample_Rate);
       Written     : long;
+      Ambient_Phase_Step : constant Float := Two_Pi * Ambient_Freq / Rate_F;
    begin
       for I in Buffer'Range loop
          declare
@@ -205,6 +273,7 @@ package body Beep.Audio is
             N          : constant Float := Float (I - 1) / Float (Buffer'Length);
             Envelope   : Float := 1.0;
             Sample_F32 : Float;
+            Ambient_S  : Float := 0.0;
          begin
             if N < 0.08 then
                Envelope := N / 0.08;
@@ -215,8 +284,22 @@ package body Beep.Audio is
                Envelope := 0.0;
             end if;
 
+            if Ambient_Gain > 0.0 then
+               Ambient_S := Ada.Numerics.Elementary_Functions.Sin (G_Ambient_Phase) * Ambient_Gain;
+               G_Ambient_Phase := G_Ambient_Phase + Ambient_Phase_Step;
+               if G_Ambient_Phase > Two_Pi then
+                  G_Ambient_Phase := G_Ambient_Phase - Two_Pi;
+               end if;
+            end if;
+
             Sample_F32 :=
               Ada.Numerics.Elementary_Functions.Sin (Phase) * Clamp01 (Gain) * Envelope;
+            Sample_F32 := Sample_F32 + Ambient_S;
+            if Sample_F32 > 1.0 then
+               Sample_F32 := 1.0;
+            elsif Sample_F32 < -1.0 then
+               Sample_F32 := -1.0;
+            end if;
             Buffer (I) := Integer_16 (Integer (Sample_F32 * 32_767.0));
          end;
       end loop;
@@ -236,7 +319,55 @@ package body Beep.Audio is
       end if;
    end Emit_Alsa;
 
+   procedure Emit_Ambient_Chunk
+     (Engine : in out Audio_Engine;
+      Ambient_Freq : Float;
+      Ambient_Gain : Float)
+   is
+      Duration_Ms : constant Positive := 44;
+      Frames      : constant Positive := Positive (Integer (Engine.Sample_Rate) * Duration_Ms / 1000);
+      type Sample_Buffer is array (Positive range <>) of Integer_16;
+      Buffer      : Sample_Buffer (1 .. Frames);
+      Two_Pi      : constant Float := 2.0 * Ada.Numerics.Pi;
+      Rate_F      : constant Float := Float (Engine.Sample_Rate);
+      Phase_Step  : constant Float := Two_Pi * Ambient_Freq / Rate_F;
+      Written     : long;
+   begin
+      for I in Buffer'Range loop
+         declare
+            S : Float := Ada.Numerics.Elementary_Functions.Sin (G_Ambient_Phase) * Ambient_Gain;
+         begin
+            G_Ambient_Phase := G_Ambient_Phase + Phase_Step;
+            if G_Ambient_Phase > Two_Pi then
+               G_Ambient_Phase := G_Ambient_Phase - Two_Pi;
+            end if;
+
+            if S > 1.0 then
+               S := 1.0;
+            elsif S < -1.0 then
+               S := -1.0;
+            end if;
+            Buffer (I) := Integer_16 (Integer (S * 32_767.0));
+         end;
+      end loop;
+
+      Written := snd_pcm_writei (Engine.Alsa_Handle, Buffer'Address, long (Buffer'Length));
+      if Written < 0 then
+         if snd_pcm_recover (Engine.Alsa_Handle, int (Written), 1) >= 0 then
+            Written := snd_pcm_writei (Engine.Alsa_Handle, Buffer'Address, long (Buffer'Length));
+            pragma Unreferenced (Written);
+         else
+            declare
+               Ignore : constant int := snd_pcm_prepare (Engine.Alsa_Handle);
+            begin
+               pragma Unreferenced (Ignore);
+            end;
+         end if;
+      end if;
+   end Emit_Ambient_Chunk;
+
    Queue : Event_Queue;
+   Ambient : Ambient_Control;
 
    G_Backend     : Backend_Kind := Null_Backend;
    G_Alsa_Handle : System.Address := System.Null_Address;
@@ -248,30 +379,48 @@ package body Beep.Audio is
    task body Audio_Player is
       Item   : Queued_Event;
       Shadow : Audio_Engine;
+      Ambient_Freq : Float := 0.0;
+      Ambient_Gain : Float := 0.0;
    begin
       loop
-         Queue.Pop (Item);
-         exit when not Item.Has_Value;
+         select
+            Queue.Pop (Item);
+            exit when not Item.Has_Value;
 
-         if G_Active then
-            case G_Backend is
-               when Null_Backend =>
-                  null;
-               when Bell_Backend =>
-                  Emit_Bell (Item.Event.Gain);
-               when Alsa_Backend =>
-                  if G_Alsa_Handle = System.Null_Address then
+            if G_Active then
+               case G_Backend is
+                  when Null_Backend =>
+                     null;
+                  when Bell_Backend =>
                      Emit_Bell (Item.Event.Gain);
-                  else
-                     Shadow :=
-                       (Backend => G_Backend,
-                        Alsa_Handle => G_Alsa_Handle,
-                        Sample_Rate => G_Sample_Rate,
-                        Active => G_Active);
-                     Emit_Alsa (Shadow, Item.Event, Item.Event.Gain);
-                  end if;
-            end case;
-         end if;
+                  when Alsa_Backend =>
+                     if G_Alsa_Handle = System.Null_Address then
+                        Emit_Bell (Item.Event.Gain);
+                     else
+                        Ambient.Snapshot (Ambient_Freq, Ambient_Gain);
+                        Shadow :=
+                          (Backend => G_Backend,
+                           Alsa_Handle => G_Alsa_Handle,
+                           Sample_Rate => G_Sample_Rate,
+                           Active => G_Active);
+                        Emit_Alsa (Shadow, Item.Event, Item.Event.Gain, Ambient_Freq, Ambient_Gain);
+                     end if;
+               end case;
+            end if;
+         or
+            delay 0.05;
+            if G_Active and then G_Backend = Alsa_Backend and then G_Alsa_Handle /= System.Null_Address then
+               Ambient.Snapshot (Ambient_Freq, Ambient_Gain);
+               if Ambient_Gain > 0.003 then
+                  Shadow :=
+                    (Backend => G_Backend,
+                     Alsa_Handle => G_Alsa_Handle,
+                     Sample_Rate => G_Sample_Rate,
+                     Active => G_Active);
+                  Emit_Ambient_Chunk (Shadow, Ambient_Freq, Ambient_Gain);
+               end if;
+            end if;
+         end select;
       end loop;
    end Audio_Player;
 
@@ -290,6 +439,8 @@ package body Beep.Audio is
       G_Alsa_Handle := System.Null_Address;
       G_Sample_Rate := Engine.Sample_Rate;
       G_Active := False;
+      G_Ambient_Phase := 0.0;
+      Ambient.Reset;
 
       if Requested = Null_Backend then
          return;
@@ -357,6 +508,9 @@ package body Beep.Audio is
       end if;
 
       Q.Gain := Clamp01 (Event.Gain * Cfg.Master_Volume);
+      if Is_Ambient_Motif (Q.Motif) then
+         Ambient.Drive (Q.Motif, Q.Gain);
+      end if;
       Queue.Push (Q);
    end Emit;
 
@@ -373,6 +527,8 @@ package body Beep.Audio is
 
       G_Backend := Null_Backend;
       G_Alsa_Handle := System.Null_Address;
+      G_Ambient_Phase := 0.0;
+      Ambient.Reset;
 
       Engine := (others => <>);
    end Shutdown;
