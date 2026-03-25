@@ -30,16 +30,6 @@ procedure Beep_Main is
       return "";
    end Value_Flag;
 
-   function Has_Flag (Flag : String) return Boolean is
-   begin
-      for I in 1 .. Ada.Command_Line.Argument_Count loop
-         if Ada.Command_Line.Argument (I) = Flag then
-            return True;
-         end if;
-      end loop;
-      return False;
-   end Has_Flag;
-
    function Clamp01 (Value : Float) return Float is
    begin
       if Value < 0.0 then
@@ -131,6 +121,11 @@ procedure Beep_Main is
    begin
       Put_Line ("beep - activity sonifier CLI (Ada migration)");
       Put_Line ("flags:");
+      Put_Line ("  -h, --help");
+      Put_Line ("  -V, --version");
+      Put_Line ("  -q, --quiet");
+      Put_Line ("  -v, --verbose");
+      Put_Line ("  -s, --silent");
       Put_Line ("  --config=<path>");
       Put_Line ("  --profile=<calm|normal|noisy>");
       Put_Line ("  --no-cpu");
@@ -143,7 +138,6 @@ procedure Beep_Main is
       Put_Line ("  --stats");
       Put_Line ("  --audio-null");
       Put_Line ("  --audio-bell");
-      Put_Line ("  --help");
    end Print_Usage;
 
    procedure Handle_Sample
@@ -206,6 +200,33 @@ procedure Beep_Main is
    Cli_Stats        : Boolean := False;
    Cli_Audio_Null   : Boolean := False;
    Cli_Audio_Bell   : Boolean := False;
+   Cli_Quiet        : Boolean := False;
+   Cli_Silent       : Boolean := False;
+   Cli_Verbose      : Boolean := False;
+
+   function Info_Enabled return Boolean is
+   begin
+      return Cli_Verbose or else (not Cli_Quiet and then not Cli_Silent);
+   end Info_Enabled;
+
+   function Warn_Enabled return Boolean is
+   begin
+      return Cli_Verbose or else (not Cli_Quiet and then not Cli_Silent);
+   end Warn_Enabled;
+
+   procedure Log_Info (Msg : String) is
+   begin
+      if Info_Enabled then
+         Ada.Text_IO.Put_Line (Msg);
+      end if;
+   end Log_Info;
+
+   procedure Log_Warn (Msg : String) is
+   begin
+      if Warn_Enabled then
+         Ada.Text_IO.Put_Line ("[warn] " & Msg);
+      end if;
+   end Log_Warn;
 
    Did_Cleanup : Boolean := False;
    Stop_Requested : Boolean := False;
@@ -245,6 +266,13 @@ procedure Beep_Main is
       if Cli_Stats then Config.Log_Stats := True; else Config.Log_Stats := False; end if;
       if Cli_Audio_Null then Config.Audio_Backend := To_Unbounded_String ("null"); end if;
       if Cli_Audio_Bell then Config.Audio_Backend := To_Unbounded_String ("bell"); end if;
+      if Cli_Silent then
+         Config.Audio_Backend := To_Unbounded_String ("null");
+         Config.Log_Events := False;
+         Config.Log_Stats := False;
+         Config.Debug_Cpu := False;
+         Config.Debug_Fake_Input := False;
+      end if;
       Config.Engine.Ambient_Level := Config.Ambient_Level;
       Config.Engine.Burst_Density := Config.Burst_Density;
    end Apply_Cli_Overrides;
@@ -258,7 +286,7 @@ procedure Beep_Main is
             Base := Beep.Config.Load_File (To_String (Config_Path), Base);
          exception
             when E : others =>
-               Ada.Text_IO.Put_Line ("[warn] reload failed for config " & To_String (Config_Path) & ": " & Ada.Exceptions.Exception_Message (E));
+               Log_Warn ("reload failed for config " & To_String (Config_Path) & ": " & Ada.Exceptions.Exception_Message (E));
          end;
       end if;
 
@@ -269,52 +297,89 @@ procedure Beep_Main is
       Config := Base;
       Beep.Audio.Reconfigure (Audio_Engine, Config);
       if Is_Reload then
-         Ada.Text_IO.Put_Line ("[info] config reloaded from " & To_String (Config_Path));
+         Log_Info ("[info] config reloaded from " & To_String (Config_Path));
       end if;
       if Is_Reload and then To_String (Config.Audio_Backend) /= Old_Backend then
-         Ada.Text_IO.Put_Line ("[warn] audio backend change requires restart");
+         Log_Warn ("audio backend change requires restart");
       end if;
    end Reload_Config_From_Disk;
 
 begin
-   if Has_Flag ("--help") or else Has_Flag ("-h") then
-      Print_Usage;
-      return;
-   end if;
-
    for I in 1 .. Ada.Command_Line.Argument_Count loop
       declare
          Arg : constant String := Ada.Command_Line.Argument (I);
          V1  : constant String := Value_Flag (Arg, "--config=");
          V2  : constant String := Value_Flag (Arg, "--profile=");
+         Recognized : Boolean := False;
       begin
          if V1 /= "" then
             Config_Path := To_Unbounded_String (V1);
+            Recognized := True;
          end if;
 
          if V2 /= "" then
             Cli_Profile := To_Unbounded_String (V2);
+            Recognized := True;
          end if;
 
-         if Arg = "--no-cpu" then Cli_No_Cpu := True; end if;
-         if Arg = "--no-system" then Cli_No_System := True; end if;
-         if Arg = "--no-net" then Cli_No_Net := True; end if;
-         if Arg = "--no-x11" then Cli_No_X11 := True; end if;
-         if Arg = "--debug-events" then Cli_Debug_Events := True; end if;
-         if Arg = "--debug-cpu" then Cli_Debug_Cpu := True; end if;
-         if Arg = "--debug-fake-input" then Cli_Debug_Fake := True; end if;
-         if Arg = "--stats" then Cli_Stats := True; end if;
-         if Arg = "--audio-null" then Cli_Audio_Null := True; end if;
-         if Arg = "--audio-bell" then Cli_Audio_Bell := True; end if;
+         if Arg = "--help" or else Arg = "-h" then
+            Print_Usage;
+            Cleanup;
+            return;
+         elsif Arg = "--version" or else Arg = "-V" then
+            Ada.Text_IO.Put_Line ("beep 0.1.0-dev");
+            Cleanup;
+            return;
+         elsif Arg = "--quiet" or else Arg = "-q" then
+            Cli_Quiet := True; Recognized := True;
+         elsif Arg = "--verbose" or else Arg = "-v" then
+            Cli_Verbose := True; Recognized := True;
+         elsif Arg = "--silent" or else Arg = "-s" then
+            Cli_Silent := True; Recognized := True;
+         elsif Arg = "--no-cpu" then
+            Cli_No_Cpu := True; Recognized := True;
+         elsif Arg = "--no-system" then
+            Cli_No_System := True; Recognized := True;
+         elsif Arg = "--no-net" then
+            Cli_No_Net := True; Recognized := True;
+         elsif Arg = "--no-x11" then
+            Cli_No_X11 := True; Recognized := True;
+         elsif Arg = "--debug-events" then
+            Cli_Debug_Events := True; Recognized := True;
+         elsif Arg = "--debug-cpu" then
+            Cli_Debug_Cpu := True; Recognized := True;
+         elsif Arg = "--debug-fake-input" then
+            Cli_Debug_Fake := True; Recognized := True;
+         elsif Arg = "--stats" then
+            Cli_Stats := True; Recognized := True;
+         elsif Arg = "--audio-null" then
+            Cli_Audio_Null := True; Recognized := True;
+         elsif Arg = "--audio-bell" then
+            Cli_Audio_Bell := True; Recognized := True;
+         end if;
+
+         if (not Recognized) and then Arg'Length > 0 and then Arg (Arg'First) = '-' then
+            Ada.Text_IO.Put_Line ("[error] unknown flag: " & Arg);
+            Print_Usage;
+            Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
+            Cleanup;
+            return;
+         end if;
       end;
    end loop;
 
+   if Cli_Silent then
+      Cli_Quiet := True;
+      Cli_Debug_Events := False;
+      Cli_Stats := False;
+   end if;
+
    Reload_Config_From_Disk (Cfg, Is_Reload => False);
 
-   Ada.Text_IO.Put_Line ("profile=" & To_String (Cfg.Profile)
+   Log_Info ("profile=" & To_String (Cfg.Profile)
       & " config=" & To_String (Config_Path)
       & " audio=" & To_String (Cfg.Audio_Backend));
-   Ada.Text_IO.Put_Line ("sources: cpu=" & Boolean'Image (Cfg.Enable_Cpu)
+   Log_Info ("sources: cpu=" & Boolean'Image (Cfg.Enable_Cpu)
       & " system=" & Boolean'Image (Cfg.Enable_System)
       & " net=" & Boolean'Image (Cfg.Enable_Network)
       & " x11=" & Boolean'Image (Cfg.Enable_X11));
@@ -322,9 +387,9 @@ begin
    Beep.Linux.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler, X11_Sampler);
    Beep.Audio.Initialize (Audio_Engine, Cfg);
    Beep.Runtime.Signals.Install;
-   Ada.Text_IO.Put_Line ("audio-backend=" & Beep.Audio.Backend_Name (Audio_Engine));
+   Log_Info ("audio-backend=" & Beep.Audio.Backend_Name (Audio_Engine));
    if Cfg.Enable_X11 and then not Beep.Linux.Samplers.X11_Active (X11_Sampler) then
-      Ada.Text_IO.Put_Line ("[warn] X11 sampler unavailable (no display or X11 access)");
+      Log_Warn ("X11 sampler unavailable (no display or X11 access)");
    end if;
    declare
       Session_Type    : constant String := Ada.Characters.Handling.To_Lower (Ada.Environment_Variables.Value ("XDG_SESSION_TYPE", ""));
@@ -332,12 +397,11 @@ begin
    begin
       Wayland_Session := Session_Type = "wayland" or else Wayland_Display /= "";
       if Wayland_Session and then (not Cfg.Enable_X11 or else not Beep.Linux.Samplers.X11_Active (X11_Sampler)) then
-         Ada.Text_IO.Put_Line
-           ("[warn] Wayland session detected without active interactive input stream; activity feel may be less responsive");
+         Log_Warn ("Wayland session detected without active interactive input stream; activity feel may be less responsive");
       end if;
    end;
 
-   Ada.Text_IO.Put_Line ("beep sampler loop started. Ctrl+C to stop.");
+   Log_Info ("beep sampler loop started. Ctrl+C to stop.");
    Startup_Ts := Beep.Linux.Samplers.Now_Ms;
    while not Stop_Requested loop
       declare
@@ -406,8 +470,7 @@ begin
            and then not X11_No_Input_Warned
            and then Ts - Startup_Ts >= 15_000
          then
-            Ada.Text_IO.Put_Line
-              ("[warn] no X11 keyboard/mouse activity observed on Wayland after 15s; interactive tuning may be incomplete");
+            Log_Warn ("no X11 keyboard/mouse activity observed on Wayland after 15s; interactive tuning may be incomplete");
             X11_No_Input_Warned := True;
          end if;
 

@@ -14,8 +14,11 @@ alr build
 
 ```bash
 ./obj/beep_main --help
+./obj/beep_main --version
 ./obj/beep_main --profile=noisy --no-cpu --audio-null
 ./obj/beep_main --debug-events --audio-bell
+./obj/beep_main --quiet
+./obj/beep_main --silent
 ```
 
 Use `--stats` to emit periodic `[stats ...]` lines with per-kind events/sec.
