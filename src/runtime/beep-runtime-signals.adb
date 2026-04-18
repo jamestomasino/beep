@@ -45,5 +45,6 @@ package body Beep.Runtime.Signals is
       Reload := Reload_Pending /= 0;
       Stop := Stop_Pending /= 0;
       Reload_Pending := 0;
+      Stop_Pending := 0;
    end Poll;
 end Beep.Runtime.Signals;

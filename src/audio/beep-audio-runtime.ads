@@ -16,6 +16,7 @@ package Beep.Audio.Runtime is
       entry Pop (Item : out Queued_Event);
       procedure Stop;
       procedure Start;
+      function Is_Stopped return Boolean;
    private
       Buffer         : Event_Buffer;
       Head           : Positive := 1;

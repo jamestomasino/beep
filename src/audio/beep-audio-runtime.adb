@@ -25,8 +25,6 @@ package body Beep.Audio.Runtime is
       begin
          if Count = 0 then
             Item.Has_Value := False;
-            --  One-shot wakeup for waiting consumer.
-            Stop_Requested := False;
          else
             Item.Has_Value := True;
             Item.Event := Buffer (Head);
@@ -48,6 +46,11 @@ package body Beep.Audio.Runtime is
       begin
          Stop_Requested := False;
       end Start;
+
+      function Is_Stopped return Boolean is
+      begin
+         return Stop_Requested;
+      end Is_Stopped;
    end Event_Queue;
 
    protected body Mix_Params is

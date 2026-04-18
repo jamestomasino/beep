@@ -200,8 +200,10 @@ package body Beep.Audio is
          select
             Queue.Pop (Item);
             if not Item.Has_Value then
-               --  Queue wake-up (for shutdown/restart), continue waiting.
-               null;
+               --  Stop requests are terminal for this background task.
+               if Queue.Is_Stopped then
+                  exit;
+               end if;
             elsif G_Active then
                case G_Backend is
                   when Null_Backend =>
@@ -322,8 +324,8 @@ package body Beep.Audio is
 
    procedure Shutdown (Engine : in out Audio_Engine) is
    begin
-      Queue.Stop;
       G_Active := False;
+      Queue.Stop;
       beep_audio_stream_shutdown;
 
       G_Backend := Null_Backend;
