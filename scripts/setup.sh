@@ -52,14 +52,22 @@ fi
 
 # --- 2. Fetch GNAT + GNATprove into this project ----------------------------
 cd "$(cd "$(dirname "$0")/.." && pwd)"
-echo "Running `alr update` to provision GNAT + GNATprove..."
+echo "Running 'alr update' to provision GNAT + GNATprove..."
 alr -n update
 
 echo
-echo "Setup complete. Toolchain available via `alr exec`:"
-alr exec -- gnatmake --version | head -1
-alr exec -- gprbuild --version | head -1
-alr exec -- gnatprove --version | head -1
+echo "Setup complete. Toolchain available via 'alr exec':"
+# Capture full output to a variable first (no pipe). Piping `gnatprove --version`
+# into `head`/`sed -n 1p` triggers SIGPIPE (exit 141): gnatprove emits several
+# lines (alt-ergo/cvc5/z3) and the slice tool exits early, which `set -o
+# pipefail` then propagates. Slicing the captured string avoids the pipe.
+first_line() { local s="$1"; printf '%s' "${s%%$'\n'*}"; }
+GNATMAKE_V="$(alr exec -- gnatmake --version 2>&1)"
+GPRBUILD_V="$(alr exec -- gprbuild --version 2>&1)"
+GNATPROVE_V="$(alr exec -- gnatprove --version 2>&1)"
+echo "  $(first_line "${GNATMAKE_V}")"
+echo "  $(first_line "${GPRBUILD_V}")"
+echo "  $(first_line "${GNATPROVE_V}")"
 echo
 echo "Build with:  BEEP_OS=darwin alr build"
 echo "Run tests:   ./obj/beep_core_tests && ./obj/beep_config_tests"
