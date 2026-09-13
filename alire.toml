@@ -1,6 +1,6 @@
 name = "beep"
 description = "CLI activity sonifier (Ada migration)"
-version = "0.1.0-dev"
+version = "0.1.7"
 license = "MIT"
 
 authors = ["James Tomasino"]

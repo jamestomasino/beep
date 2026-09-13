@@ -6,6 +6,7 @@ with Ada.Exceptions;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Beep;
 with Beep.Audio;
 with Beep.Config;
 with Beep.Core.Mapping;
@@ -327,7 +328,7 @@ begin
             Cleanup;
             return;
          elsif Arg = "--version" or else Arg = "-V" then
-            Ada.Text_IO.Put_Line ("beep 0.1.0-dev");
+            Ada.Text_IO.Put_Line ("beep " & Beep.Version);
             Cleanup;
             return;
          elsif Arg = "--quiet" or else Arg = "-q" then
