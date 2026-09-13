@@ -39,7 +39,7 @@ install: build ## install into ALR home (~/.config/alire)
 
 install-system: build ## install into $(PREFIX) (needs sudo)
 	@echo ">> installing beep into $(PREFIX) (may prompt for sudo)"
-	alr --prefix $(PREFIX) install
+	alr install --prefix $(PREFIX)
 
 clean: ## remove build artifacts (obj/)
 	alr clean
