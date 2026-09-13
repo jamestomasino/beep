@@ -97,9 +97,14 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          echo "$DEVELOPER_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          # Strip any whitespace (e.g. trailing newline from the pasted
+          # secret) before decoding / using it — a stray newline makes the
+          # PKCS12 MAC check fail with "passphrase not correct".
+          P12_PW="$(printf '%s' "$DEVELOPER_CERTIFICATE_PASSWORD" | tr -d '[:space:]')"
+          printf '%s' "$DEVELOPER_CERTIFICATE" | tr -d '[:space:]' \
+            | base64 --decode > "$RUNNER_TEMP/signing.p12"
           security import "$RUNNER_TEMP/signing.p12" \
-            -P "$DEVELOPER_CERTIFICATE_PASSWORD" \
+            -P "$P12_PW" \
             -A -t cert -f pkcs12 \
             -k "$KEYCHAIN_PATH"
 
@@ -140,7 +145,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "$ASC_API_KEY" | base64 --decode > "$RUNNER_TEMP/asc_api_key.p8"
+          printf '%s' "$ASC_API_KEY" | tr -d '[:space:]' \
+            | base64 --decode > "$RUNNER_TEMP/asc_api_key.p8"
           chmod 600 "$RUNNER_TEMP/asc_api_key.p8"
 
           # notarytool requires a container format (zip / dmg / pkg)
