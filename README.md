@@ -120,6 +120,32 @@ https://github.com/alire-project/alire/releases/latest
 
 If you prefer distro packages, check your distribution repositories for `alire`.
 
+## Editor / LSP (Vim + ALE)
+
+Day-to-day editing uses **Vim** with **ALE** linting. ALE ships a built-in Ada
+LSP linter (`adals`) that drives AdaCore's **`ada_language_server`** over stdio,
+so no separate LSP client plugin is required.
+
+- `ada_language_server` is installed to `~/.local/bin` by `scripts/setup.sh`
+  (pinned AdaCore release, darwin-arm64), so it's on PATH.
+- This repo's `.lvimrc` (sourced by the `vim-localvimrc` plugin) sets
+  `filetype=ada` for `.ads`/`.adb` — Vim 9.1 ships no Ada filetype — and points
+  ALE at `beep.gpr`. `.als.json` records the same project file for other editors.
+- Diagnostics land in the sign column. ALE mappings: `<leader>an` next,
+  `<leader>ap` previous, `<leader>ax` fix, `<leader>ae` ALE info buffer.
+- `:AlrBuild` (defined in `.lvimrc`) runs `BEEP_OS=darwin alr build` in-place.
+
+Other editors: the `AdaCore.ada` VS Code extension or GNAT Studio bundle the
+same GNAT Language Server and read the GPR directly.
+
+Note: `gnatls` in GNAT FSF 16 is the **legacy unit/dependency-listing
+utility**, not the LSP. It's still handy for build inspection:
+
+```bash
+gnatls -u obj/main.o   # list units in an object
+gnatls -v obj/main.o   # verbose: full paths + change status
+```
+
 ## Build
 
 ```bash

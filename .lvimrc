@@ -1,0 +1,44 @@
+" beep — project-local Vim config (sourced by the vim-localvimrc plugin).
+"
+" Goal: make ALE lint Ada via AdaCore's ada_language_server, using the `adals`
+" linter ALE ships built-in. No separate LSP client plugin is required.
+"
+" Requires (installed by scripts/setup.sh, on PATH):
+"   - ada_language_server   (AdaCore GNAT Language Server)
+"   - ALE                   (vim-localvimrc / your global vimrc already load it)
+
+" --- 1. Ada filetype (Vim 9.1 ships none) ----------------------------------
+" ALE keys its Ada linters off filetype 'ada'. Vim 9.1 has no ada filetype or
+" syntax, so map our extensions to it. Apply to the current buffer now and to
+" any future Ada buffer in this project.
+augroup beep_ada_filetype
+  autocmd!
+  autocmd BufRead,BufNewFile *.ads,*.adb setfiletype ada
+augroup END
+let s:beep_ext = fnamemodify(expand('%'), ':e')
+if s:beep_ext ==# 'ads' || s:beep_ext ==# 'adb'
+  setfiletype ada
+endif
+
+" --- 2. ALE: drive AdaCore's ada_language_server ----------------------------
+" ALE's `adals` linter launches `ada_language_server` (resolved from PATH) and
+" sends the GPR as `ada.projectFile`. ALE sets the LSP working directory to the
+" buffer's directory (e.g. src/), so the project file MUST be an absolute path.
+" This file lives at the repo root, so derive the root from its own location.
+let s:beep_root = fnamemodify(expand('<sfile>:p:h'), ':p')
+let b:ale_ada_adals_executable = 'ada_language_server'
+let b:ale_ada_adals_project    = s:beep_root . '/beep.gpr'
+let b:ale_ada_adals_encoding   = 'utf-8'
+
+" Use the LSP linter only. The `gcc` linter needs `gnatgcc` on PATH (Alire is
+" scoped, so it isn't) and would otherwise fall back to macOS `gcc` (clang),
+" which errors confusingly on `-x ada`. Restricting to `adals` keeps output clean.
+let b:ale_linters = { 'ada': ['adals'] }
+
+" Diagnostics in the sign column + quickfix.
+let b:ale_sign_column_always = 1
+let b:ale_fix_on_save = 0
+
+" --- 3. Convenience: build the open Ada unit with the Alire toolchain -------
+" `:AlrBuild` runs `alr build` (respecting BEEP_OS) without leaving Vim.
+command! AlrBuild execute '!BEEP_OS=darwin alr build 2>&1 | tail -n 20'
