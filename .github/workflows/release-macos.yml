@@ -19,6 +19,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+    env:
+      DEVELOPER_CERTIFICATE: ${{ secrets.DEVELOPER_CERTIFICATE }}
+      DEVELOPER_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_CERTIFICATE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER: ${{ secrets.ASC_API_ISSUER }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,15 +68,98 @@ jobs:
           BEEP_OS=darwin alr -n build
           test -x ./obj/beep
 
-      - name: Ad-hoc codesign binary
+      - name: Verify signing secrets are present
         shell: bash
         run: |
           set -euo pipefail
-          # Ad-hoc signature (no Apple Developer account required) so the
-          # binary runs on Apple Silicon even when Gatekeeper quarantines it.
-          # A Developer ID signature + notarization can replace this later.
-          codesign --force --sign - ./obj/beep
+          missing=()
+          for var in DEVELOPER_CERTIFICATE DEVELOPER_CERTIFICATE_PASSWORD \
+                     APPLE_TEAM_ID ASC_API_KEY ASC_API_KEY_ID ASC_API_ISSUER; do
+            if [ -z "${!var}" ]; then
+              missing+=("$var")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required GitHub secrets: ${missing[*]}"
+            echo "Set these in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          echo "All signing secrets present."
+
+      - name: Install Developer ID certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32 | tr -d '/+=')"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$DEVELOPER_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" \
+            -P "$DEVELOPER_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          # Allow codesign to access the private key without a GUI prompt
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Make this keychain the default for the user session
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+          echo "=== Available signing identities ==="
+          security find-identity -v -p codesigning
+
+      - name: Sign binary with Developer ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          IDENTITY=$(security find-identity -v -p codesigning \
+            | grep "Developer ID Application" | awk '{print $2}')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No 'Developer ID Application' identity found."
+            security find-identity -v -p codesigning || true
+            exit 1
+          fi
+          echo "Signing identity: $IDENTITY"
+
+          codesign --force \
+            --sign "$IDENTITY" \
+            --options runtime \
+            --timestamp \
+            ./obj/beep
+
+          echo "=== Signature verification ==="
           codesign --verify --strict --verbose=2 ./obj/beep
+          codesign -dv --verbose=4 ./obj/beep
+
+      - name: Notarize binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$ASC_API_KEY" | base64 --decode > "$RUNNER_TEMP/asc_api_key.p8"
+          chmod 600 "$RUNNER_TEMP/asc_api_key.p8"
+
+          # notarytool requires a container format (zip / dmg / pkg)
+          zip -q -r "$RUNNER_TEMP/beep-notarization.zip" obj/beep
+
+          echo "Submitting for notarization (may take a few minutes)..."
+          xcrun notarytool submit "$RUNNER_TEMP/beep-notarization.zip" \
+            --key "$RUNNER_TEMP/asc_api_key.p8" \
+            --key-id "$ASC_API_KEY_ID" \
+            --issuer "$ASC_API_ISSUER" \
+            --wait
+
+      - name: Staple notarization ticket
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun stapler staple ./obj/beep
+          xcrun stapler validate ./obj/beep
+          echo "Ticket stapled and validated."
 
       - name: Package release artifact
         shell: bash
