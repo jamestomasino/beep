@@ -103,6 +103,22 @@ jobs:
           P12_PW="$(printf '%s' "$DEVELOPER_CERTIFICATE_PASSWORD" | tr -d '[:space:]')"
           printf '%s' "$DEVELOPER_CERTIFICATE" | tr -d '[:space:]' \
             | base64 --decode > "$RUNNER_TEMP/signing.p12"
+
+          # --- Diagnostics: compare the CI secret against the known-good
+          # --- local reference so a mangled paste is obvious in the log.
+          B64="$(printf '%s' "$DEVELOPER_CERTIFICATE" | tr -d '[:space:]')"
+          echo "=== cert secret diagnostics ==="
+          echo "password length:  ${#P12_PW}"
+          echo "password sha256:  $(printf '%s' "$P12_PW" | shasum -a 256 | cut -d' ' -f1)"
+          echo "base64 length:    ${#B64}  (expected 4348)"
+          echo "base64 sha256:    $(printf '%s' "$B64" | shasum -a 256 | cut -d' ' -f1)"
+          echo "base64 first 24:  ${B64:0:24}"
+          echo "base64 last 24:   ${B64: -24}"
+          echo "decoded p12 bytes: $(wc -c < "$RUNNER_TEMP/signing.p12")  (expected 3259)"
+          echo "decoded p12 sha256: $(shasum -a 256 "$RUNNER_TEMP/signing.p12" | cut -d' ' -f1)"
+          echo "expected p12 sha256: 5294a81f187fa5fc44097b1134740edf937c135efea7fb49a02a70aa0831511f"
+          echo "==============================="
+
           security import "$RUNNER_TEMP/signing.p12" \
             -P "$P12_PW" \
             -A -t cert -f pkcs12 \
