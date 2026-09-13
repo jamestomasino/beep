@@ -70,6 +70,28 @@ No external runtime libraries are currently required for the portable `bell`/`nu
 You need:
 - GNAT (Ada compiler/toolchain)
 - Alire (`alr`, Ada package manager/build frontend)
+- GNATprove (SPARK prover, pulled automatically by `alr update`)
+
+### macOS (recommended: one command)
+
+Homebrew has no `gnat`, `alire`, or `gnatprove` formula/cask on macOS, so the
+toolchain is provisioned via **Alire** (AdaCore's recommended package manager
+for non-industrial use), which ships prebuilt GNAT + GNATprove for arm64 and
+x86_64 macOS:
+
+```bash
+./scripts/setup.sh
+```
+
+That installs `alr` into `~/.local/bin` (if missing) and runs `alr update` to
+fetch GNAT + GNATprove into the project. Then:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"   # add to your shell profile
+BEEP_OS=darwin alr build
+```
+
+### Linux
 
 Ubuntu/Debian:
 
