@@ -1,5 +1,7 @@
 project Beep is
    type Build_OS_Type is ("linux", "darwin");
+   -- OS is selected via the BEEP_OS variable. The Makefile sets it
+   -- automatically from `uname`; a bare `alr build` defaults to linux.
    Build_OS : Build_OS_Type := External ("BEEP_OS", "linux");
    case Build_OS is
       when "darwin" =>
