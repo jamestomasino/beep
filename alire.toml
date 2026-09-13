@@ -1,6 +1,7 @@
 name = "beep"
 description = "CLI activity sonifier (Ada migration)"
 version = "0.1.0-dev"
+license = "MIT"
 
 authors = ["James Tomasino"]
 maintainers = ["James Tomasino <james@example.com>"]
