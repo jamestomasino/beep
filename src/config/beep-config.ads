@@ -37,6 +37,7 @@ package Beep.Config is
       Memory_Min_Gap_Ms   : Integer := 38;
       System_Min_Gap_Ms   : Integer := 48;
       Network_Min_Gap_Ms  : Integer := 26;
+      Stdin_Min_Gap_Ms    : Integer := 40;
 
       --  Source-specific post-sampling multipliers.
       Mouse_Click_Boost : Float := 1.22;
@@ -78,6 +79,8 @@ package Beep.Config is
       Enable_System    : Boolean := True;
       Enable_Network   : Boolean := True;
       Enable_X11       : Boolean := False;
+      Enable_Stdin     : Boolean := False;
+      Stdin_Intensity  : Float := 0.60;
       Log_Events       : Boolean := False;
       Debug_Cpu        : Boolean := False;
       Debug_Fake_Input : Boolean := False;

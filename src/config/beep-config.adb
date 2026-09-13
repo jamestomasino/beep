@@ -64,6 +64,7 @@ package body Beep.Config is
          Out_Cfg.Engine.Network_Stutter_Chance    := 0.18;
          Out_Cfg.Engine.Min_Gap_Ms                := 120;
          Out_Cfg.Engine.Cooldown_Ms               := 260;
+         Out_Cfg.Stdin_Intensity                  := 0.45;
 
          Out_Cfg.Synth.Hum_Freq_Min           := 62.0;
          Out_Cfg.Synth.Hum_Freq_Max           := 108.0;
@@ -110,6 +111,7 @@ package body Beep.Config is
          Out_Cfg.Engine.Network_Stutter_Chance    := 0.44;
          Out_Cfg.Engine.Min_Gap_Ms                := 40;
          Out_Cfg.Engine.Cooldown_Ms               := 110;
+         Out_Cfg.Stdin_Intensity                  := 0.85;
 
          Out_Cfg.Synth.Hum_Freq_Min           := 74.0;
          Out_Cfg.Synth.Hum_Freq_Max           := 132.0;
@@ -162,6 +164,7 @@ package body Beep.Config is
          Out_Cfg.Engine.Network_Stutter_Chance    := 0.30;
          Out_Cfg.Engine.Min_Gap_Ms                := 70;
          Out_Cfg.Engine.Cooldown_Ms               := 180;
+         Out_Cfg.Stdin_Intensity                  := 0.60;
 
          Out_Cfg.Synth.Hum_Freq_Min           := 68.0;
          Out_Cfg.Synth.Hum_Freq_Max           := 118.0;
@@ -263,6 +266,24 @@ package body Beep.Config is
          B := Parse_Bool (V, Ok_Bool);
          if Ok_Bool then
             Cfg.Enable_X11 := B;
+         end if;
+
+      elsif K = "enable_stdin" then
+         B := Parse_Bool (V, Ok_Bool);
+         if Ok_Bool then
+            Cfg.Enable_Stdin := B;
+         end if;
+
+      elsif K = "stdin_intensity" then
+         F := Parse_F32 (V, Ok_Num);
+         if Ok_Num then
+            Cfg.Stdin_Intensity := Clamp01 (F);
+         end if;
+
+      elsif K = "stdin_min_gap_ms" then
+         I := Parse_I64 (V, Ok_Num);
+         if Ok_Num and then I >= 1 then
+            Cfg.Signal.Stdin_Min_Gap_Ms := Integer (I);
          end if;
 
       elsif K = "log_events" then

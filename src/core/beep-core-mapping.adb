@@ -359,6 +359,32 @@ package body Beep.Core.Mapping is
             Motif := Choose_Motif (State, Options);
             Gain := Sample.Intensity * 0.95;
             Reason := To_Unbounded_String ("network variety");
+
+         when Stdin =>
+            --  Event-driven trigger: one line in, one discrete hit out.
+            --  Deliberately no Drone/Hum/Pad so stdin never becomes an ambient bed.
+            if Sample.Intensity < 0.05 then
+               return (Has_Value => False, others => <>);
+            end if;
+
+            Options.Append (Bip);
+            Options.Append (Chirp);
+            Options.Append (Tick);
+            Options.Append (Bloop);
+            Options.Append (Cluster);
+            Options.Append (Cluster);
+            Options.Append (Run);
+            Options.Append (Wobble);
+
+            if Sample.Intensity > 0.72 then
+               Options.Append (Zap);
+               Options.Append (Yip);
+               Options.Append (Stutter);
+            end if;
+
+            Motif := Choose_Motif (State, Options);
+            Gain := Sample.Intensity;
+            Reason := To_Unbounded_String ("stdin trigger");
       end case;
 
       if State.Has_Last_Motif and then Motif = State.Last_Motif then
@@ -392,6 +418,14 @@ package body Beep.Core.Mapping is
          Drop_Chance := Clamp01 (Drop_Chance - 0.24);
       elsif Is_Sequenced_Motif (Motif) then
          Drop_Chance := Clamp01 (Drop_Chance - 0.14);
+      end if;
+
+      --  Stdin is event-driven: a piped line is a discrete, user-visible event,
+      --  so it must be heard (rate-limited purely by the min-gap below, not by
+      --  a probabilistic drop). Applied after the motif-specific adjustments so
+      --  no motif (e.g. Wobble) can re-enable a drop chance for stdin.
+      if Sample.Kind = Stdin then
+         Drop_Chance := 0.0;
       end if;
 
       Random_Chance := Float (Next_Rand (State) and 16#FFFF#) / 65535.0;

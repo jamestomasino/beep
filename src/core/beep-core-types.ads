@@ -6,7 +6,8 @@ package Beep.Core.Types is
    subtype Milliseconds is Long_Long_Integer;
 
    --  Activity source categories sampled from the OS.
-   type Activity_Kind is (Keyboard, Mouse, Cpu, Process, Memory, System, Network);
+   --  Stdin is event-driven: each line read from standard input is one trigger.
+   type Activity_Kind is (Keyboard, Mouse, Cpu, Process, Memory, System, Network, Stdin);
    --  Coarse CPU utilization bucket used by mapping rules.
    type Cpu_Bucket is (Idle, Active, Busy);
 

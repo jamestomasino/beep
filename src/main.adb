@@ -13,6 +13,7 @@ with Beep.Core.Mapping;
 with Beep.Core.Types;
 with Beep.Platform.Samplers;
 with Beep.Runtime.Signals;
+with Beep.Stdin;
 
 procedure Main is
    use Ada.Strings.Unbounded;
@@ -64,6 +65,8 @@ procedure Main is
             return Cfg.Signal.System_Weight;
          when Network =>
             return Cfg.Signal.Network_Weight;
+         when Stdin =>
+            return 1.0;
       end case;
    end Kind_Weight;
 
@@ -77,6 +80,7 @@ procedure Main is
          when Memory => return Milliseconds (Cfg.Signal.Memory_Min_Gap_Ms);
          when Beep.Core.Types.System => return Milliseconds (Cfg.Signal.System_Min_Gap_Ms);
          when Network => return Milliseconds (Cfg.Signal.Network_Min_Gap_Ms);
+         when Stdin => return Milliseconds (Cfg.Signal.Stdin_Min_Gap_Ms);
       end case;
    end Kind_Min_Gap;
 
@@ -114,6 +118,7 @@ procedure Main is
          & " memory=" & Rate_Image (Counts (Memory), Window_Ms)
          & " system=" & Rate_Image (Counts (Beep.Core.Types.System), Window_Ms)
          & " net=" & Rate_Image (Counts (Network), Window_Ms)
+         & " stdin=" & Rate_Image (Counts (Stdin), Window_Ms)
          & " total=" & Rate_Image (Total, Window_Ms));
    end Emit_Stats;
 
@@ -133,6 +138,9 @@ procedure Main is
       Put_Line ("  --no-system");
       Put_Line ("  --no-net");
       Put_Line ("  --no-x11");
+      Put_Line ("  --stdin");
+      Put_Line ("  --stdin-intensity=<0.0..1.0>");
+      Put_Line ("  --stdin-min-gap-ms=<ms>");
       Put_Line ("  --debug-events");
       Put_Line ("  --debug-cpu");
       Put_Line ("  --debug-fake-input");
@@ -195,6 +203,9 @@ procedure Main is
    Cli_No_System    : Boolean := False;
    Cli_No_Net       : Boolean := False;
    Cli_No_X11       : Boolean := False;
+   Cli_Stdin        : Boolean := False;
+   Cli_Stdin_Intensity : Unbounded_String := Null_Unbounded_String;
+   Cli_Stdin_Min_Gap   : Unbounded_String := Null_Unbounded_String;
    Cli_Debug_Events : Boolean := False;
    Cli_Debug_Cpu    : Boolean := False;
    Cli_Debug_Fake   : Boolean := False;
@@ -243,6 +254,8 @@ procedure Main is
    Sys_Sampler  : Beep.Platform.Samplers.System_Sampler;
    Net_Sampler  : Beep.Platform.Samplers.Net_Sampler;
    X11_Sampler  : Beep.Platform.Samplers.X11_Sampler;
+   Stdin_Reader : Beep.Stdin.Line_Reader;
+   Stdin_Eof    : Boolean := False;
    Audio_Engine : Beep.Audio.Audio_Engine;
 
    procedure Cleanup is
@@ -261,6 +274,29 @@ procedure Main is
       if Cli_No_System then Config.Enable_System := False; end if;
       if Cli_No_Net then Config.Enable_Network := False; end if;
       if Cli_No_X11 then Config.Enable_X11 := False; end if;
+      if Cli_Stdin then
+         Config.Enable_Stdin := True;
+         if Cli_Stdin_Intensity /= Null_Unbounded_String then
+            declare
+               F : constant Float := Float'Value (To_String (Cli_Stdin_Intensity));
+            begin
+               Config.Stdin_Intensity := Clamp01 (F);
+            exception
+               when others => null;
+            end;
+         end if;
+         if Cli_Stdin_Min_Gap /= Null_Unbounded_String then
+            declare
+               I : constant Integer := Integer'Value (To_String (Cli_Stdin_Min_Gap));
+            begin
+               if I >= 1 then
+                  Config.Signal.Stdin_Min_Gap_Ms := I;
+               end if;
+            exception
+               when others => null;
+            end;
+         end if;
+      end if;
       if Cli_Debug_Events then Config.Log_Events := True; end if;
       if Cli_Debug_Cpu then Config.Debug_Cpu := True; end if;
       if Cli_Debug_Fake then Config.Debug_Fake_Input := True; end if;
@@ -323,6 +359,20 @@ begin
             Recognized := True;
          end if;
 
+         declare
+            V3 : constant String := Value_Flag (Arg, "--stdin-intensity=");
+            V4 : constant String := Value_Flag (Arg, "--stdin-min-gap-ms=");
+         begin
+            if V3 /= "" then
+               Cli_Stdin_Intensity := To_Unbounded_String (V3);
+               Recognized := True;
+            end if;
+            if V4 /= "" then
+               Cli_Stdin_Min_Gap := To_Unbounded_String (V4);
+               Recognized := True;
+            end if;
+         end;
+
          if Arg = "--help" or else Arg = "-h" then
             Print_Usage;
             Cleanup;
@@ -345,6 +395,8 @@ begin
             Cli_No_Net := True; Recognized := True;
          elsif Arg = "--no-x11" then
             Cli_No_X11 := True; Recognized := True;
+         elsif Arg = "--stdin" then
+            Cli_Stdin := True; Recognized := True;
          elsif Arg = "--debug-events" then
             Cli_Debug_Events := True; Recognized := True;
          elsif Arg = "--debug-cpu" then
@@ -393,7 +445,11 @@ begin
    Log_Info ("sources: cpu=" & Boolean'Image (Cfg.Enable_Cpu)
       & " system=" & Boolean'Image (Cfg.Enable_System)
       & " net=" & Boolean'Image (Cfg.Enable_Network)
-      & " x11=" & Boolean'Image (Cfg.Enable_X11));
+      & " x11=" & Boolean'Image (Cfg.Enable_X11)
+      & " stdin=" & Boolean'Image (Cfg.Enable_Stdin));
+   if Cfg.Enable_Stdin and then Beep.Stdin.Is_TTY then
+      Log_Warn ("stdin is a terminal; pipe log lines to beep to use --stdin (e.g. tail -f app.log | beep --stdin --no-cpu --no-system --no-net --no-x11)");
+   end if;
 
    Beep.Platform.Samplers.Initialize (Cpu_Sampler, Sys_Sampler, Net_Sampler, X11_Sampler);
    Beep.Audio.Initialize (Audio_Engine, Cfg);
@@ -477,6 +533,30 @@ begin
                   X11_Seen_Input := True;
                   Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Beep.Platform.Samplers.Item (Batch, I));
                end loop;
+            end;
+         end if;
+
+         if Cfg.Enable_Stdin and then not Stdin_Eof then
+            declare
+               Line      : Unbounded_String;
+               Have_Line : Boolean;
+               Eof       : Boolean;
+            begin
+               Beep.Stdin.Poll (Stdin_Reader, Line, Have_Line, Eof, Timeout_Ms => 20);
+               if Eof then
+                  Stdin_Eof := True;
+               end if;
+               if Have_Line then
+                  declare
+                     Sample : Activity_Sample;
+                  begin
+                     Sample.Kind      := Stdin;
+                     Sample.Timestamp := Ts;
+                     Sample.Intensity := Cfg.Stdin_Intensity;
+                     Sample.Source    := Line;
+                     Handle_Sample (Mapper_State, Audio_Engine, Cfg, Last_By_Kind, Event_Counts, Sample);
+                  end;
+               end if;
             end;
          end if;
 
