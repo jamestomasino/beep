@@ -178,10 +178,17 @@ jobs:
       - name: Staple notarization ticket
         shell: bash
         run: |
-          set -euo pipefail
-          xcrun stapler staple ./obj/beep
-          xcrun stapler validate ./obj/beep
-          echo "Ticket stapled and validated."
+          set -uo pipefail
+          # Stapling a bare Mach-O CLI binary often fails (stapler expects a
+          # .app/.pkg bundle) with "Error 73". Notarization already passed
+          # (status: Accepted), which is what Gatekeeper actually validates,
+          # and the ticket is fetched on first launch if not stapled. So
+          # treat stapling as best-effort: warn but do not fail the release.
+          if xcrun stapler staple ./obj/beep && xcrun stapler validate ./obj/beep; then
+            echo "Ticket stapled and validated."
+          else
+            echo "::warning::Stapling failed (expected for a bare CLI binary). Notarization was accepted, so Gatekeeper will validate on first launch."
+          fi
 
       - name: Package release artifact
         shell: bash
