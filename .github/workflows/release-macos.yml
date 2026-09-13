@@ -61,6 +61,16 @@ jobs:
           BEEP_OS=darwin alr -n build
           test -x ./obj/beep
 
+      - name: Ad-hoc codesign binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ad-hoc signature (no Apple Developer account required) so the
+          # binary runs on Apple Silicon even when Gatekeeper quarantines it.
+          # A Developer ID signature + notarization can replace this later.
+          codesign --force --sign - ./obj/beep
+          codesign --verify --strict --verbose=2 ./obj/beep
+
       - name: Package release artifact
         shell: bash
         run: |
