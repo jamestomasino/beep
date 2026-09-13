@@ -407,7 +407,7 @@ package body Beep.Core.Mapping is
          Effective_Gap := 12;
       end if;
 
-      if Now_Ms - State.Last_Emit_Ms < Effective_Gap then
+      if Now_Ms - State.Last_Emit_Ms (Sample.Kind) < Effective_Gap then
          return (Has_Value => False, others => <>);
       end if;
 
@@ -433,7 +433,7 @@ package body Beep.Core.Mapping is
 
       if State.Has_Last_Motif
         and then Motif = State.Last_Motif
-        and then Now_Ms - State.Last_Emit_Ms < Motif_Cooldown
+        and then Now_Ms - State.Last_Emit_Ms (Sample.Kind) < Motif_Cooldown
         and then Density < 0.86
       then
          return (Has_Value => False, others => <>);
@@ -458,7 +458,7 @@ package body Beep.Core.Mapping is
 
       Gain := Gain * (0.70 + Ambient * 0.45);
 
-      State.Last_Emit_Ms := Now_Ms;
+      State.Last_Emit_Ms (Sample.Kind) := Now_Ms;
       State.Last_Motif := Motif;
       State.Has_Last_Motif := True;
 

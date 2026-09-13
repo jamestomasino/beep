@@ -322,7 +322,19 @@ package body Beep.Platform.Samplers.Darwin is
       if Pos = 0 then
          return False;
       end if;
-      return Parse_First_I64 (Dump (Pos .. Dump'Last), Value);
+      --  The value appears after the '=' sign, e.g. "HIDIdleTime" = 9274318458.
+      --  Locate the first digit from the key onward and parse from there.
+      declare
+         I : Integer := Pos + 1;
+      begin
+         while I <= Dump'Last and then Dump (I) not in '0' .. '9' loop
+            I := I + 1;
+         end loop;
+         if I > Dump'Last then
+            return False;
+         end if;
+         return Parse_First_I64 (Dump (I .. Dump'Last), Value);
+      end;
    end Darwin_Hid_Idle_Ns;
 
    procedure Initialize
@@ -545,40 +557,52 @@ package body Beep.Platform.Samplers.Darwin is
          return Batch;
       end if;
 
-      if Idle_Ns < Sampler.Prev_Idle_Ns then
-         declare
-            Drop_Ns : constant Long_Long_Integer := Sampler.Prev_Idle_Ns - Idle_Ns;
-            K_Intensity : Float := Clamp01 (0.36 + Float (Drop_Ns) / 220_000_000.0);
-            M_Intensity : Float := Clamp01 (0.28 + Float (Drop_Ns) / 340_000_000.0);
-         begin
-            Add_Sample
-              (Batch,
-               (Kind => Keyboard,
-                Intensity => K_Intensity,
-                Timestamp => Timestamp,
-                Source => To_Unbounded_String ("darwin.hid.keyboard"),
-                Cpu_Bucket => Idle));
+      --  HIDIdleTime is a nanosecond counter that resets to ~0 on every input
+      --  event and then climbs back up. The sampler polls every ~40ms, so a
+      --  single keypress can be observed either as a drop (polling right after
+      --  the reset) or as a low-but-climbing value (polling a few ms later).
+      --  Either way, a low counter means "input happened recently", so treat
+      --  both the drop and the low value as activity.
+      declare
+         Recent_Input : constant Boolean :=
+           Idle_Ns < Sampler.Prev_Idle_Ns
+           or else Idle_Ns < 260_000_000;
+      begin
+         if Recent_Input
+           and then (Sampler.Last_Emit_Ms = 0
+            or else Timestamp - Sampler.Last_Emit_Ms >= 140)
+         then
+            declare
+               Drop_Ns   : Long_Long_Integer := 0;
+               K_Intensity : Float;
+               M_Intensity : Float;
+            begin
+               if Idle_Ns < Sampler.Prev_Idle_Ns then
+                  Drop_Ns := Sampler.Prev_Idle_Ns - Idle_Ns;
+               end if;
+               K_Intensity := Clamp01 (0.36 + Float (Drop_Ns) / 220_000_000.0);
+               M_Intensity := Clamp01 (0.28 + Float (Drop_Ns) / 340_000_000.0);
 
-            Add_Sample
-              (Batch,
-               (Kind => Mouse,
-                Intensity => M_Intensity,
-                Timestamp => Timestamp,
-                Source => To_Unbounded_String ("darwin.hid.pointer"),
-                Cpu_Bucket => Idle));
+               Add_Sample
+                 (Batch,
+                  (Kind => Keyboard,
+                   Intensity => K_Intensity,
+                   Timestamp => Timestamp,
+                   Source => To_Unbounded_String ("darwin.hid.keyboard"),
+                   Cpu_Bucket => Idle));
 
-            Sampler.Last_Emit_Ms := Timestamp;
-         end;
-      elsif Idle_Ns < 260_000_000 and then (Sampler.Last_Emit_Ms = 0 or else Timestamp - Sampler.Last_Emit_Ms >= 140) then
-         Add_Sample
-           (Batch,
-            (Kind => Keyboard,
-             Intensity => 0.34,
-             Timestamp => Timestamp,
-             Source => To_Unbounded_String ("darwin.hid.keyboard.continuous"),
-             Cpu_Bucket => Idle));
-         Sampler.Last_Emit_Ms := Timestamp;
-      end if;
+               Add_Sample
+                 (Batch,
+                  (Kind => Mouse,
+                   Intensity => M_Intensity,
+                   Timestamp => Timestamp,
+                   Source => To_Unbounded_String ("darwin.hid.pointer"),
+                   Cpu_Bucket => Idle));
+
+               Sampler.Last_Emit_Ms := Timestamp;
+            end;
+         end if;
+      end;
 
       Sampler.Prev_Idle_Ns := Idle_Ns;
       return Batch;

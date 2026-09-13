@@ -94,9 +94,12 @@ package Beep.Core.Types is
       Cooldown_Ms               : Milliseconds := 180;
    end record;
 
+   --  Per-kind emission timestamps.
+   type Kind_Millisecond_Array is array (Activity_Kind) of Milliseconds;
+
    --  Mutable engine state carried across samples.
    type Engine_State is record
-      Last_Emit_Ms   : Milliseconds := 0;
+      Last_Emit_Ms   : Kind_Millisecond_Array := (others => 0);
       Last_Sample_Ms : Milliseconds := 0;
       Last_Motif     : Motif_Type := Bip;
       Has_Last_Motif : Boolean := False;
