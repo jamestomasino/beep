@@ -30,8 +30,8 @@ Notes:
 ## Homebrew Install (macOS)
 
 ```bash
-brew tap jamestomasino/beep
-brew install jamestomasino/beep/beep
+brew tap jamestomasino/homebrew-beep
+brew install jamestomasino/homebrew-beep/beep
 ```
 
 Verify:

@@ -57,7 +57,7 @@ Acceptance:
    - Build from source via `alr build` (or direct `gprbuild` once dependency story is stable).
 4. Enable bottles via tap workflow and publish per-arch macOS bottles.
 5. Document install paths:
-   - `brew install jamestomasino/beep/beep`
+   - `brew install jamestomasino/homebrew-beep/beep`
 
 Acceptance:
 - Clean install on macOS via Homebrew.

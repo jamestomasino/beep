@@ -31,7 +31,7 @@ Each tarball contains:
 Create a tap (once):
 
 ```bash
-brew tap-new jamestomasino/beep
+brew tap-new jamestomasino/homebrew-beep
 ```
 
 Add `Formula/beep.rb` in that tap:
@@ -66,7 +66,7 @@ end
 Install from tap:
 
 ```bash
-brew install jamestomasino/beep/beep
+brew install jamestomasino/homebrew-beep/beep
 ```
 
 ## Notes
