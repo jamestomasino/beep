@@ -1,6 +1,6 @@
 # beep
 
-`beep` is a Linux-first Ada CLI that turns system and activity signals into a layered ambient soundscape. 
+`beep` is an Ada CLI that turns system and activity signals into a layered ambient soundscape. 
 
 *beep beep*
 
@@ -72,7 +72,7 @@ You need:
 - Alire (`alr`, Ada package manager/build frontend)
 - GNATprove (SPARK prover, pulled automatically by `alr update`)
 
-### macOS (recommended: one command)
+### macOS (recommended)
 
 Homebrew has no `gnat`, `alire`, or `gnatprove` formula/cask on macOS, so the
 toolchain is provisioned via **Alire** (AdaCore's recommended package manager
@@ -119,32 +119,6 @@ https://github.com/alire-project/alire/releases/latest
 ```
 
 If you prefer distro packages, check your distribution repositories for `alire`.
-
-## Editor / LSP (Vim + ALE)
-
-Day-to-day editing uses **Vim** with **ALE** linting. ALE ships a built-in Ada
-LSP linter (`adals`) that drives AdaCore's **`ada_language_server`** over stdio,
-so no separate LSP client plugin is required.
-
-- `ada_language_server` is installed to `~/.local/bin` by `scripts/setup.sh`
-  (pinned AdaCore release, darwin-arm64), so it's on PATH.
-- This repo's `.lvimrc` (sourced by the `vim-localvimrc` plugin) sets
-  `filetype=ada` for `.ads`/`.adb` — Vim 9.1 ships no Ada filetype — and points
-  ALE at `beep.gpr`. `.als.json` records the same project file for other editors.
-- Diagnostics land in the sign column. ALE mappings: `<leader>an` next,
-  `<leader>ap` previous, `<leader>ax` fix, `<leader>ae` ALE info buffer.
-- `:AlrBuild` (defined in `.lvimrc`) runs `BEEP_OS=darwin alr build` in-place.
-
-Other editors: the `AdaCore.ada` VS Code extension or GNAT Studio bundle the
-same GNAT Language Server and read the GPR directly.
-
-Note: `gnatls` in GNAT FSF 16 is the **legacy unit/dependency-listing
-utility**, not the LSP. It's still handy for build inspection:
-
-```bash
-gnatls -u obj/main.o   # list units in an object
-gnatls -v obj/main.o   # verbose: full paths + change status
-```
 
 ## Build
 
@@ -193,37 +167,6 @@ Uninstall:
 rm -f ~/.local/bin/beep
 # or
 sudo rm -f /usr/local/bin/beep
-```
-
-## macOS + Homebrew (Binary Releases)
-
-This repo includes a tag-triggered GitHub Actions workflow at
-`.github/workflows/release-macos.yml` that builds macOS binaries and
-publishes them as GitHub Release assets.
-
-Use those assets from a custom Homebrew tap formula for precompiled installs.
-See:
-
-- `docs/homebrew-binary-release.md`
-- `docs/macos-homebrew-plan.md`
-
-## Run
-
-```bash
-beep --help
-beep --version
-beep --profile=noisy --no-cpu --audio-null
-beep --debug-events --audio-bell
-beep --quiet
-beep --silent
-```
-
-Use `--stats` to emit periodic `[stats ...]` lines with per-kind events/sec.
-
-Send `SIGHUP` to a running process to reload config from disk:
-
-```bash
-kill -HUP <beep_pid>
 ```
 
 ## Config
@@ -348,17 +291,3 @@ stutter_steps_max=5
 stutter_spacing_min_ms=12
 stutter_spacing_max_ms=26
 ```
-
-## Tests
-
-```bash
-./obj/beep_core_tests
-./obj/beep_config_tests
-./scripts/prove.sh
-```
-
-## Notes
-
-- System/tool dependencies are declared in `alire.toml`.
-- Config defaults load from `~/.config/beep/config.conf` when present.
-- Current implementation includes Ada core mapping/config tests and an initial SPARK proof target (`beep-core-safety`).
