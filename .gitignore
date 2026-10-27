@@ -27,3 +27,7 @@ main
 
 # Local environment files
 .env
+
+# Test scratch files
+beep_stdin_reader_test.tmp
+beep_stdin_reader_test.tmp@

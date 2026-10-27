@@ -53,8 +53,11 @@ private
 
    --  int poll(struct pollfd *fds, nfds_t nfds, int timeout);
    --  Named Poll_2 to avoid colliding with the public Poll procedure.
+   --  nfds_t is `int` (32-bit) on both POSIX platforms, so the binding must
+   --  use Interfaces.C.int, not unsigned_long (64-bit): a wider type shifts
+   --  the timeout argument to the wrong register and poll returns an error.
    function Poll_2 (Fds        : access Pollfd;
-                    Nfds       : Interfaces.C.unsigned_long;
+                    Nfds       : Interfaces.C.int;
                     Timeout_Ms : Interfaces.C.int) return Interfaces.C.int
       with Import, Convention => C, External_Name => "poll";
 

@@ -83,43 +83,46 @@ package body Beep.Stdin is
          return;
       end if;
 
-      if N = 0 then
-         --  No data yet this tick.
-         return;
-      end if;
+      if N > 0 then
+         --  Read whatever is available into the chunk buffer.
+         Got := Read_Bytes (Fd, Chunk (1)'Access, size_t (R.Read_Chunk));
 
-      --  Read whatever is available into the chunk buffer.
-      Got := Read_Bytes (Fd, Chunk (1)'Access, size_t (R.Read_Chunk));
-
-      if Got < 0 then
-         --  Read error: stop polling the fd.
-         R.Done := True;
-         Eof    := True;
-         return;
-      end if;
-
-      if Got = 0 then
-         --  EOF: upstream closed. Flush any trailing partial line so the last
-         --  line of a piped log is not lost, then report EOF.
-         R.Done := True;
-         Eof    := True;
-         if Take_Line (R, Line) then
-            Have_Line := True;
-         else
-            if Ada.Strings.Unbounded.Length (R.Buf) > 0 then
-               Line      := R.Buf;
-               R.Buf     := Ada.Strings.Unbounded.Null_Unbounded_String;
-               Have_Line := True;
-            end if;
+         if Got < 0 then
+            --  Read error: stop polling the fd.
+            R.Done := True;
+            Eof    := True;
+            return;
          end if;
+
+         if Got > 0 then
+            --  Append the freshly read bytes to the line buffer.
+            for I in 1 .. Natural (Got) loop
+               Ada.Strings.Unbounded.Append (R.Buf, Chunk (I));
+            end loop;
+         end if;
+      end if;
+
+      --  Always try to emit a complete line from the buffer first, so a
+      --  backlog of lines (or a line that arrived before this tick) is not
+      --  skipped in favour of flushing a partial tail.
+      if Take_Line (R, Line) then
+         Have_Line := True;
          return;
       end if;
 
-      --  Append the freshly read bytes to the line buffer.
-      for I in 1 .. Natural (Got) loop
-         Ada.Strings.Unbounded.Append (R.Buf, Chunk (I));
-      end loop;
+      if N = 0 then
+         --  No data yet this tick; whatever is in the buffer is partial.
+         return;
+      end if;
 
-      Have_Line := Take_Line (R, Line);
+      --  EOF: upstream closed. Flush any trailing partial line so the last
+      --  line of a piped log is not lost, then report EOF.
+      R.Done := True;
+      Eof    := True;
+      if Ada.Strings.Unbounded.Length (R.Buf) > 0 then
+         Line      := R.Buf;
+         R.Buf     := Ada.Strings.Unbounded.Null_Unbounded_String;
+         Have_Line := True;
+      end if;
    end Poll;
 end Beep.Stdin;
