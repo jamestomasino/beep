@@ -140,7 +140,8 @@ package body Beep.Audio is
       Eagain_Retries : Natural := 0;
       --  Index into Buffer for the next write.  Written is 0-based (frames
       --  already written); the buffer index is 1-based, so Index = Written + 1.
-      --  Computed as Positive to match the buffer's index type.
+      --  Written is always >= 0, so Written + 1 is always a valid Positive
+      --  index and the conversion below never raises.
       Index : Positive;
    begin
       for I in Buffer'Range loop
@@ -155,13 +156,16 @@ package body Beep.Audio is
             exit;
          end if;
 
-         Index := Positive (Written) + 1;
+         Index := Positive (Written + 1);
          N := int (snd_pcm_writei
            (Handle,
             Buffer (Index)'Address,
             Remaining));
          if N >= 0 then
             Written := Written + long (N);
+            if Written > long (Buffer'Length) then
+               Written := long (Buffer'Length);
+            end if;
             Eagain_Retries := 0;
             exit when Written = long (Buffer'Length);
          end if;
