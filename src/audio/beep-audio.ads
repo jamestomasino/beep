@@ -8,6 +8,9 @@ package Beep.Audio is
    type Audio_Engine is private;
 
    --  Initialize backend resources according to Cfg.Audio_Backend.
+   --  Reinitialization after Shutdown is not supported: the player task is
+   --  terminal, so a post-shutdown Initialize is a no-op that leaves
+   --  Engine.Active = False and logs a warning.
    procedure Initialize (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config);
    --  Re-apply runtime audio parameters without restarting the process.
    procedure Reconfigure (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config);

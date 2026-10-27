@@ -14,6 +14,17 @@ package body Beep.Audio.Shared is
       end if;
    end Clamp01;
 
+   function To_Int16 (Sample : Float) return Interfaces.Integer_16 is
+      S : constant Float :=
+        (if Sample < -1.0 then -1.0
+         else (if Sample > 1.0 then 1.0 else Sample));
+      Scaled : constant Float := S * 32_767.0;
+   begin
+      --  Integer(Float) on GNAT rounds to nearest (half away from zero),
+      --  so a plain conversion gives correct rounding without a nudge.
+      return Interfaces.Integer_16 (Integer (Scaled));
+   end To_Int16;
+
    function Effective_Duration_Ms (Event : Sound_Event) return Positive is
       D : Integer := Event.Duration_Ms;
    begin

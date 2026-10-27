@@ -11,9 +11,12 @@ package Beep.Audio.Runtime is
       Event     : Sound_Event;
    end record;
 
+   --  Bounded event queue with drop-oldest when full. The only consumer is
+   --  the single Audio_Player task, which uses Try_Pop (never blocks), so
+   --  shutdown never has to wake a consumer parked in an entry.
    protected type Event_Queue is
       procedure Push (Event : Sound_Event);
-      entry Pop (Item : out Queued_Event);
+      procedure Try_Pop (Item : out Queued_Event; Available : out Boolean);
       procedure Stop;
       procedure Start;
       function Is_Stopped return Boolean;
@@ -43,13 +46,25 @@ package Beep.Audio.Runtime is
       Fore_Attn_P : Float := 0.55;
    end Mix_Params;
 
-   protected type Ambient_Control is
-      procedure Drive (Motif : Motif_Type; Gain : Float; Drive_Scale : Float; Max_Level : Float);
-      procedure Snapshot (Freq : out Float; Gain : out Float; Decay : Float);
-      procedure Reset;
+   --  Player lifecycle control. Shutdown order:
+   --    1. Event_Queue.Stop          (no more events accepted)
+   --    2. Request_Stop              (player exits within one pacing step)
+   --    3. platform unblock if needed (macOS: signal the C bridge)
+   --    4. Wait_Stopped              (player acknowledges termination)
+   --    5. close device resources
+   --  Wait_Stopped must never deadlock: it is a no-op once the player has
+   --  marked itself stopped, and safe to call repeatedly.
+   protected type Player_Control is
+      procedure Request_Stop;
+      procedure Mark_Started;
+      procedure Mark_Stopped;
+      function Stop_Requested return Boolean;
+      function Started return Boolean;
+      function Stopped return Boolean;
+      entry Wait_Stopped;
    private
-      Target_Freq  : Float := 92.0;
-      Current_Freq : Float := 92.0;
-      Level        : Float := 0.0;
-   end Ambient_Control;
+      Stop_Flag  : Boolean := False;
+      Started_F  : Boolean := False;
+      Stopped_F  : Boolean := False;
+   end Player_Control;
 end Beep.Audio.Runtime;
