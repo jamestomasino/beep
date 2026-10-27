@@ -23,8 +23,13 @@ package body Beep.Audio is
    Snd_Pcm_Mode_Non_Blocking    : constant int := 1;
    --  ALSA returns negative errno values on error: -EAGAIN (-11), -EPIPE (-32).
    E_Again                      : constant int := -11;
-   Poll_In                      : constant short := 1;   -- POLLIN
+   Poll_Out                     : constant short := 4;   -- POLLOUT (playback ready)
    Poll_Err                     : constant short := 8;   -- POLLERR
+   Poll_Hup                     : constant short := 16;  -- POLLHUP
+   --  Fault mask: POLLERR or POLLHUP.  The two bits do not overlap, so the
+   --  bitwise OR is their sum (8 + 16 = 24); Ada has no built-in integer
+   --  bitwise-OR operator, so we precompute the mask as a constant.
+   Poll_Fault_Mask              : constant short := 24;
 
    subtype Queued_Event is Beep.Audio.Runtime.Queued_Event;
 
@@ -162,64 +167,74 @@ package body Beep.Audio is
             Buffer (Index)'Address,
             Remaining));
          if N >= 0 then
+            --  Successful write (possibly partial).  A partial write is a
+            --  normal outcome in non-blocking mode: advance Written and
+            --  re-loop to write the remainder.  Only a negative return is an
+            --  error, handled in the else branch below.
             Written := Written + long (N);
             if Written > long (Buffer'Length) then
                Written := long (Buffer'Length);
             end if;
             Eagain_Retries := 0;
             exit when Written = long (Buffer'Length);
-         end if;
-
-         if N = E_Again then
-            --  Device not ready: poll with a 20 ms timeout, then re-loop.
-            --  Bounded retries so a stuck device cannot spin the CPU.
-            if Eagain_Retries >= 50 then
-               --  Drop the chunk; the next chunk will retry.
-               return;
-            end if;
-            Eagain_Retries := Eagain_Retries + 1;
-            N := snd_pcm_poll_descriptors_count (Handle);
-            if N > 0 then
-               N := snd_pcm_poll_descriptors (Handle, Poll_Fds'Access, 1);
+         else
+            if N = E_Again then
+               --  Device not ready: poll with a 20 ms timeout, then re-loop.
+               --  Bounded retries so a stuck device cannot spin the CPU.
+               if Eagain_Retries >= 50 then
+                  --  Drop the chunk; the next chunk will retry.
+                  return;
+               end if;
+               Eagain_Retries := Eagain_Retries + 1;
+               N := snd_pcm_poll_descriptors_count (Handle);
                if N > 0 then
-                  --  POLLIN: block until the device can accept data (or an
-                  --  error condition), so poll() returns as soon as it is
-                  --  ready instead of always waiting out the full 20 ms
-                  --  timeout.  Without this set, each EAGAIN retry just
-                  --  sleeps the whole timeout, adding ~20 ms of latency
-                  --  per chunk and never waking early on readiness.
-                  Poll_Fds.Events := Poll_In;
-                  R := poll (Poll_Fds'Access, 1, 20);
-                  if R > 0 then
-                     declare
-                        Revents : constant short := Poll_Fds.Revents;
-                     begin
-                        if (Interfaces.Unsigned_32 (Revents)
-                            and Interfaces.Unsigned_32 (Poll_Err)) /= 0 then
-                           --  Fatal device error: recover, then retry.
-                           if snd_pcm_recover (Handle, -1, 1) < 0 then
-                              G_Backend := Bell_Backend;
-                              G_Native_Handle := System.Null_Address;
-                              Ada.Text_IO.Put_Line
-                                ("[warn] ALSA device error; falling back to bell");
-                              return;
+                  N := snd_pcm_poll_descriptors (Handle, Poll_Fds'Access, 1);
+                  if N > 0 then
+                     --  Playback readiness is signaled by POLLOUT, not POLLIN
+                     --  (POLLIN is for capture).  snd_pcm_poll_descriptors has
+                     --  already set the correct mask for this stream, but we
+                     --  force POLLOUT to be explicit and portable.  Without a
+                     --  correct mask the poll never wakes on readiness, so each
+                     --  EAGAIN retry just waits out the full 20 ms timeout and
+                     --  the write path degrades into spurious errors.
+                     Poll_Fds.Events := Poll_Out;
+                     R := poll (Poll_Fds'Access, 1, 20);
+                     if R > 0 then
+                        declare
+                           Revents : constant short := Poll_Fds.Revents;
+                           Fault   : constant Boolean :=
+                             (Interfaces.Unsigned_32 (Revents)
+                              and Interfaces.Unsigned_32 (Poll_Fault_Mask)) /= 0;
+                        begin
+                           if Fault then
+                              --  Fatal device error: recover, then retry.
+                              if snd_pcm_recover (Handle, -1, 1) < 0 then
+                                 G_Backend := Bell_Backend;
+                                 G_Native_Handle := System.Null_Address;
+                                 Ada.Text_IO.Put_Line
+                                   ("[warn] ALSA device error (revents="
+                                    & Integer'Image (Integer (Revents))
+                                    & "); falling back to bell");
+                                 return;
+                              end if;
+                              Written := 0;
                            end if;
-                           Written := 0;
-                        end if;
-                     end;
+                        end;
+                     end if;
                   end if;
                end if;
-            end if;
-         else
-            --  EPIPE or other recoverable error.
-            if snd_pcm_recover (Handle, int (N), 1) >= 0 then
-               Written := 0;  --  retry the full chunk
             else
-               G_Backend := Bell_Backend;
-               G_Native_Handle := System.Null_Address;
-               Ada.Text_IO.Put_Line
-                 ("[warn] ALSA unrecoverable; falling back to bell");
-               return;
+               --  EPIPE or other recoverable error.
+               if snd_pcm_recover (Handle, int (N), 1) >= 0 then
+                  Written := 0;  --  retry the full chunk
+               else
+                  G_Backend := Bell_Backend;
+                  G_Native_Handle := System.Null_Address;
+                  Ada.Text_IO.Put_Line
+                    ("[warn] ALSA unrecoverable (snd_pcm_writei err="
+                     & Integer'Image (Integer (N)) & "); falling back to bell");
+                  return;
+               end if;
             end if;
          end if;
       end loop;
