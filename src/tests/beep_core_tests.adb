@@ -191,9 +191,10 @@ procedure Beep_Core_Tests is
    --  each newline-stripped, and EOF must be observed after the last.
    procedure Test_Stdin_Reader is
       use Interfaces.C;
-      --  int open(const char *path, int flags);
+      --  int open(const char *path, int flags, mode_t mode);
       function Open_File (Path  : access Character;
-                          Flags : Interfaces.C.int) return Interfaces.C.int
+                          Flags : Interfaces.C.int;
+                          Mode  : Interfaces.C.int) return Interfaces.C.int
          with Import, Convention => C, External_Name => "open";
 
       --  int close(int fd);
@@ -207,7 +208,8 @@ procedure Beep_Core_Tests is
          with Import, Convention => C, External_Name => "write";
 
       Path    : constant String := "beep_stdin_reader_test.tmp";
-      Path_C  : array (1 .. Path'Length) of aliased Character;
+      --  One extra slot for the NUL terminator required by C string calls.
+      Path_C  : array (1 .. Path'Length + 1) of aliased Character;
       Fd      : Interfaces.C.int;
       R       : Beep.Stdin.Line_Reader;
       Line    : Unbounded_String;
@@ -222,15 +224,18 @@ procedure Beep_Core_Tests is
       --  O_RDWR(2) | O_CREAT(64) | O_TRUNC(512) = 578 (POSIX, same on darwin/linux).
       Open_Flags : constant Interfaces.C.int := 578;
       Rd_Flags   : constant Interfaces.C.int := 0;  -- O_RDONLY
+      --  0644 (rw-r--r--) as an Ada octal literal.
+      Mode_0644 : constant Interfaces.C.int := 8#644#;
    begin
       for I in 1 .. Path'Length loop
          Path_C (I) := Path (I);
       end loop;
+      Path_C (Path'Length + 1) := Character'Val (0);
       for I in 1 .. Payload'Length loop
          Payload_C (I) := Payload (I);
       end loop;
 
-      Fd := Open_File (Path_C (1)'Access, Open_Flags);
+      Fd := Open_File (Path_C (1)'Access, Open_Flags, Mode_0644);
       if Fd < 0 then
          Expect (False, "could not open temp file for reader test");
          return;
@@ -242,7 +247,7 @@ procedure Beep_Core_Tests is
       end if;
       Closed := Close_Fd (Fd);
 
-      Beep.Stdin.Initialize (R, Fd => Open_File (Path_C (1)'Access, Rd_Flags),
+      Beep.Stdin.Initialize (R, Fd => Open_File (Path_C (1)'Access, Rd_Flags, 0),
                              Read_Chunk => 3);
 
       loop
@@ -260,6 +265,15 @@ procedure Beep_Core_Tests is
       end loop;
 
       Expect (Seen = 3, "reader should deliver exactly 3 lines (got " & Integer'Image (Seen) & ")");
+      --  Remove the temp file so the test is repeatable.
+      declare
+         --  int unlink(const char *path);
+         function Unlink_File (Path : access Character) return Interfaces.C.int
+            with Import, Convention => C, External_Name => "unlink";
+         Rm : Interfaces.C.int;
+      begin
+         Rm := Unlink_File (Path_C (1)'Access);  -- best-effort cleanup
+      end;
    end Test_Stdin_Reader;
 
 begin

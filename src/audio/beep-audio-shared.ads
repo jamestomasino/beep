@@ -1,7 +1,12 @@
 with Beep.Core.Types;
+with Interfaces;
 
 package Beep.Audio.Shared is
    function Clamp01 (Value : Float) return Float;
+
+   --  Convert a normalized float sample to signed 16-bit PCM.
+   --  Clamps to [-1.0, 1.0] and rounds (no truncation toward zero).
+   function To_Int16 (Sample : Float) return Interfaces.Integer_16;
 
    function Effective_Duration_Ms
      (Event : Beep.Core.Types.Sound_Event) return Positive;

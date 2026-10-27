@@ -29,6 +29,7 @@ build: ## build for the host OS (BEEP_OS=$(BEEP_OS))
 test: build ## build + run the test executables
 	./obj/beep_core_tests
 	./obj/beep_config_tests
+	./obj/beep_audio_tests
 
 run: build ## build + run the beep CLI
 	./obj/beep
