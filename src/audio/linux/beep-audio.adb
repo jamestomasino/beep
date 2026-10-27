@@ -138,6 +138,10 @@ package body Beep.Audio is
       N : int;
       R : int;
       Eagain_Retries : Natural := 0;
+      --  Index into Buffer for the next write.  Written is 0-based (frames
+      --  already written); the buffer index is 1-based, so Index = Written + 1.
+      --  Computed as Positive to match the buffer's index type.
+      Index : Positive;
    begin
       for I in Buffer'Range loop
          Buffer (I) := Shared.To_Int16 (F32 (I));
@@ -151,9 +155,10 @@ package body Beep.Audio is
             exit;
          end if;
 
+         Index := Positive (Written) + 1;
          N := int (snd_pcm_writei
            (Handle,
-            Buffer (Positive (Written) + 1)'Address,
+            Buffer (Index)'Address,
             Remaining));
          if N >= 0 then
             Written := Written + long (N);
