@@ -257,4 +257,13 @@ package body Beep.Audio.Mixer is
       end loop;
       return Count;
    end Active_Voice_Count;
+
+   function Is_Busy (M : Mixer_State) return Boolean is
+   begin
+      if Active_Voice_Count (M) > 0 then
+         return True;
+      end if;
+      --  Same threshold as the ambient rendering gate in Render_Chunk.
+      return M.Ambient.Level > 0.001;
+   end Is_Busy;
 end Beep.Audio.Mixer;

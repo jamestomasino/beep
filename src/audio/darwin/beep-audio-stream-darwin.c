@@ -5,12 +5,20 @@
 #if defined(__APPLE__)
 
 #include <AudioToolbox/AudioQueue.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <time.h>
 
-#define BEEP_STREAM_RING_FRAMES 262144u
-#define BEEP_STREAM_BUFFER_FRAMES 2048u
-#define BEEP_STREAM_BUFFER_COUNT 3u
+/*
+ * Ring buffer sized to a few mixer chunks (8 x 512 = 4096 frames, ~93 ms).
+ * AudioQueue buffers are 512 frames each (matching the mixer chunk size) so
+ * the queue stays ahead of the reader without the writer ever needing to
+ * block under normal operation.
+ */
+#define BEEP_STREAM_RING_FRAMES 4096u
+#define BEEP_STREAM_BUFFER_FRAMES 512u
+#define BEEP_STREAM_BUFFER_COUNT 8u
 
 static AudioQueueRef g_queue = NULL;
 static AudioQueueBufferRef g_buffers[BEEP_STREAM_BUFFER_COUNT];
@@ -19,6 +27,7 @@ static size_t g_read_idx = 0;
 static size_t g_write_idx = 0;
 static size_t g_count = 0;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_cond = PTHREAD_COND_INITIALIZER;
 static atomic_int g_active = 0;
 
 static void beep_stream_read(float* out, size_t frames) {
@@ -33,6 +42,8 @@ static void beep_stream_read(float* out, size_t frames) {
       out[i] = 0.0f;
     }
   }
+  /* Wake a writer that may be blocked waiting for ring space. */
+  pthread_cond_broadcast(&g_cond);
   pthread_mutex_unlock(&g_lock);
 }
 
@@ -106,27 +117,59 @@ int beep_audio_stream_init(unsigned sample_rate) {
   return 1;
 }
 
+/*
+ * Submit one chunk of float samples to the ring.
+ *
+ * Backpressure: if the ring is full the writer blocks on the condition
+ * variable (guarded by g_lock) until the AudioQueue callback drains space,
+ * or until shutdown signals.  This replaces the old drop-oldest-PCM
+ * behavior: no queued PCM is silently lost under normal backpressure.
+ *
+ * Returns 1 on success, 0 if the stream is inactive (shutdown was called).
+ */
 int beep_audio_stream_write(const float* samples, unsigned frames) {
   size_t i;
-  size_t needed;
-  size_t drop;
+  size_t needed = (size_t)frames;
 
   if (atomic_load_explicit(&g_active, memory_order_acquire) == 0 || samples == NULL || frames == 0u) {
     return 0;
   }
 
-  needed = (size_t)frames;
-  pthread_mutex_lock(&g_lock);
-
-  if (needed >= BEEP_STREAM_RING_FRAMES) {
-    samples += needed - (BEEP_STREAM_RING_FRAMES - 1u);
-    needed = BEEP_STREAM_RING_FRAMES - 1u;
+  /* A chunk larger than the whole ring can never be admitted; reject it
+   * rather than spinning on the bounded wait and dropping it forever.
+   * The Ada player always writes 512-frame chunks, well within the limit. */
+  if ((size_t)frames > BEEP_STREAM_RING_FRAMES) {
+    return 0;
   }
 
-  if (needed > (BEEP_STREAM_RING_FRAMES - g_count)) {
-    drop = needed - (BEEP_STREAM_RING_FRAMES - g_count);
-    g_read_idx = (g_read_idx + drop) % BEEP_STREAM_RING_FRAMES;
-    g_count -= drop;
+  pthread_mutex_lock(&g_lock);
+
+  /* Wait until the ring has room for the full chunk, or shutdown signals.
+   * The wait is bounded (20 ms) and re-checked in the loop (spurious-wakeup
+   * safety): if the AudioQueue callback is paused and never drains the ring,
+   * the writer drops the chunk rather than hanging, matching the Linux
+   * EAGAIN-drop policy.  A blocked writer always wakes on shutdown. */
+  for (;;) {
+    if (atomic_load_explicit(&g_active, memory_order_acquire) == 0) {
+      pthread_mutex_unlock(&g_lock);
+      return 0;
+    }
+    if (g_count + needed <= BEEP_STREAM_RING_FRAMES) {
+      break;
+    }
+
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_nsec += 20L * 1000L * 1000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+      deadline.tv_sec += 1;
+      deadline.tv_nsec -= 1000000000L;
+    }
+    if (pthread_cond_timedwait(&g_cond, &g_lock, &deadline) == ETIMEDOUT) {
+      /* Space never freed: drop this chunk, the next chunk retries. */
+      pthread_mutex_unlock(&g_lock);
+      return 0;
+    }
   }
 
   for (i = 0; i < needed; ++i) {
@@ -139,12 +182,22 @@ int beep_audio_stream_write(const float* samples, unsigned frames) {
   return 1;
 }
 
+/*
+ * Shutdown: set the inactive flag, broadcast the condition variable (waking
+ * any blocked writer), then dispose the AudioQueue and reset the ring.
+ * A writer blocked in beep_audio_stream_write wakes, sees the inactive
+ * flag, and returns 0 so the Ada player can exit.
+ */
 void beep_audio_stream_shutdown(void) {
   if (atomic_load_explicit(&g_active, memory_order_acquire) == 0) {
     return;
   }
 
+  pthread_mutex_lock(&g_lock);
   atomic_store_explicit(&g_active, 0, memory_order_release);
+  pthread_cond_broadcast(&g_cond);
+  pthread_mutex_unlock(&g_lock);
+
   if (g_queue != NULL) {
     AudioQueueStop(g_queue, true);
     AudioQueueDispose(g_queue, true);

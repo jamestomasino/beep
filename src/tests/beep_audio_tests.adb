@@ -4,6 +4,7 @@ with Ada.Text_IO;
 with Beep.Audio;
 with Beep.Audio.Mixer;
 with Beep.Audio.Shared;
+with Beep.Config;
 with Beep.Core.Types;
 with Interfaces;
 
@@ -354,20 +355,117 @@ procedure Beep_Audio_Tests is
               "ambient should saturate at Ambient_Max");
    end Test_Ambient_Accumulation;
 
-begin
-   --  The platform body (pulled in via the child packages above) declares a
-   --  global Audio_Player task that auto-starts and only exits on Shutdown.
-   --  The mixer tests below use their own local Mixer_State values and never
-   --  touch that task, so stop it immediately: this lets the process
-   --  terminate cleanly on both the success and the failure path.
-   --  Shutdown on a fresh engine is safe: no device is open to close, and
-   --  Wait_Stopped returns within one pacing step (~10 ms).
-   declare
-      Engine : Beep.Audio.Audio_Engine;
+   --  Is_Busy reflects audible state: false when idle, true after an event,
+   --  and false again once the voice retires (Tick has no ambient bed).
+   procedure Test_Is_Busy is
+      M      : Mixer_State;
+      Params : constant Mix_Parameters := Default_Params;
+      Buf    : Sample_Buffer (1 .. 512);
+      Chunks : Natural := 0;
    begin
-      Beep.Audio.Shutdown (Engine);
-   end;
+      Reset (M);
+      Expect (not Is_Busy (M), "fresh mixer should be idle");
 
+      Add_Event (M, Make_Event (Tick, Gain => 0.8), Params);
+      Expect (Is_Busy (M), "mixer should be busy right after an event");
+
+      --  Render until the voice retires.  A 100 ms voice is ~4410 frames =
+      --  ~9 chunks, so 20 is ample.
+      while Is_Busy (M) and then Chunks < 20 loop
+         Render_Chunk (M, Buf, Params);
+         Chunks := Chunks + 1;
+      end loop;
+      Expect (not Is_Busy (M), "mixer should be idle after the voice retires");
+      Expect (Chunks in 1 .. 20, "voice should have retired within 20 chunks");
+   end Test_Is_Busy;
+
+   --  Ambient bed must keep decaying on ticks with no new events: the
+   --  player renders while Is_Busy, so the tail is not cut off.
+   procedure Test_Ambient_Continues_Without_Events is
+      M      : Mixer_State;
+      Params : constant Mix_Parameters := Default_Params;
+      Buf    : Sample_Buffer (1 .. 512);
+      Max_1  : Float := 0.0;
+      Max_2  : Float := 0.0;
+      Chunks : Natural := 0;
+   begin
+      Reset (M);
+      Add_Event (M, Make_Event (Drone, Gain => 0.8), Params);
+      Expect (Is_Busy (M), "ambient bed should be active after a Drone");
+
+      --  Render one chunk (the Drone voice also plays, but the ambient bed
+      --  is what must survive the voice retiring).
+      Render_Chunk (M, Buf, Params);
+      for I in Buf'Range loop
+         if abs (Buf (I)) > Max_1 then
+            Max_1 := abs (Buf (I));
+         end if;
+      end loop;
+      Expect (Max_1 > 0.0, "first chunk should be audible");
+
+      --  Render until the voice retires; the ambient bed must still be
+      --  above the silence threshold afterwards.
+      while Active_Voice_Count (M) > 0 and then Chunks < 20 loop
+         Render_Chunk (M, Buf, Params);
+         Chunks := Chunks + 1;
+      end loop;
+
+      Expect (Is_Busy (M), "ambient bed should still be busy after the voice retires");
+
+      --  The next chunk (no new events) must still be audible: the bed
+      --  decays rather than being frozen or dropped.
+      Render_Chunk (M, Buf, Params);
+      for I in Buf'Range loop
+         if abs (Buf (I)) > Max_2 then
+            Max_2 := abs (Buf (I));
+         end if;
+      end loop;
+      Expect (Max_2 > 0.0, "ambient tail should keep rendering after the voice retires");
+   end Test_Ambient_Continues_Without_Events;
+
+   --  Full lifecycle on the null backend: Initialize, Emit, Shutdown must
+   --  complete without deadlock and leave the engine inactive.  This
+   --  exercises the player task's start/drain/stop path.  The native
+   --  backend path needs a device and is covered by CI on macOS/Linux.
+   --  NOTE: the player task is terminal, so this test must run last.
+   procedure Test_Null_Backend_Lifecycle is
+      Cfg    : Beep.Config.App_Config := (others => <>);
+      Engine : Beep.Audio.Audio_Engine;
+      Evt    : Sound_Event;
+   begin
+      --  The default config selects the native backend; force null so this
+      --  test needs no audio device and works on any platform (including CI).
+      Cfg.Audio_Backend := Ada.Strings.Unbounded.To_Unbounded_String ("null");
+      Beep.Audio.Initialize (Engine, Cfg);
+      Expect (Beep.Audio.Is_Active (Engine), "engine should be active after Initialize");
+
+      Evt := (Motif       => Tick,
+              Gain        => 0.5,
+              Duration_Ms => 50,
+              Reason      => Ada.Strings.Unbounded.Null_Unbounded_String,
+              Timestamp   => 100);
+      Beep.Audio.Emit (Engine, Cfg, Evt);
+
+      --  Give the player a couple of ticks to drain the event.
+      delay 0.05;
+
+      --  Shutdown must return (no deadlock in Wait_Stopped).
+      Beep.Audio.Shutdown (Engine);
+      Expect (not Beep.Audio.Is_Active (Engine), "engine should be inactive after Shutdown");
+
+      --  Repeated Shutdown is safe (idempotent).
+      Beep.Audio.Shutdown (Engine);
+   end Test_Null_Backend_Lifecycle;
+
+begin
+   --  The platform body declares a global Audio_Player task that auto-starts.
+   --  On the null backend it simply drains an empty queue and paces, so it is
+   --  harmless to leave running during the mixer tests (which use their own
+   --  local Mixer_State values and never touch the task or the global mixer).
+   --  We must NOT call Shutdown here: the player task is terminal, and a
+   --  Shutdown marks Ctrl.Stopped, which would make the lifecycle test's
+   --  Initialize a no-op.  The lifecycle test (last) is the sole Initialize/
+   --  Shutdown pair for the shared task.
    Test_Empty_Mixer_Silence;
    Test_Single_Voice_Nonzero;
    Test_Two_Voices_Overlap;
@@ -382,6 +480,10 @@ begin
    Test_To_Int16;
    Test_Ambient_Decay_Time_Based;
    Test_Ambient_Accumulation;
+   Test_Is_Busy;
+   Test_Ambient_Continues_Without_Events;
+   --  Terminal: starts and stops the shared player task.  Must be last.
+   Test_Null_Backend_Lifecycle;
    Put_Line ("beep_audio_tests: OK");
 exception
    when E : others =>

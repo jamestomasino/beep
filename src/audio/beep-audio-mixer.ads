@@ -76,4 +76,10 @@ package Beep.Audio.Mixer is
 
    --  Number of currently active voices.
    function Active_Voice_Count (M : Mixer_State) return Natural;
+
+   --  True when the mixer still has audible state: at least one active voice,
+   --  or the ambient bed above the silence threshold.  Player tasks use this
+   --  to decide whether to render a chunk (voices and ambient both decay and
+   --  must keep advancing even on ticks with no new events).
+   function Is_Busy (M : Mixer_State) return Boolean;
 end Beep.Audio.Mixer;

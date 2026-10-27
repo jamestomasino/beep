@@ -1,8 +1,8 @@
 with Ada.Characters.Handling;
-with Ada.Numerics;
-with Ada.Numerics.Elementary_Functions;
+with Ada.Exceptions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Beep.Audio.Mixer;
 with Beep.Audio.Runtime;
 with Beep.Audio.Shared;
 with Beep.Config;
@@ -10,7 +10,6 @@ with Interfaces.C;
 with System;
 
 package body Beep.Audio is
-   use Ada.Strings.Unbounded;
    use Beep.Core.Types;
    use Interfaces.C;
 
@@ -19,47 +18,28 @@ package body Beep.Audio is
    function beep_audio_stream_init (Sample_Rate : unsigned) return int
      with Import, Convention => C, External_Name => "beep_audio_stream_init";
 
-   function beep_audio_stream_write (Samples : System.Address; Frames : unsigned) return int
+   function beep_audio_stream_write
+     (Samples : System.Address; Frames : unsigned) return int
      with Import, Convention => C, External_Name => "beep_audio_stream_write";
 
    procedure beep_audio_stream_shutdown
      with Import, Convention => C, External_Name => "beep_audio_stream_shutdown";
 
-   function Clamp01 (Value : Float) return Float
-     renames Beep.Audio.Shared.Clamp01;
-
    function Backend_From_Config (Cfg : Beep.Config.App_Config) return Backend_Kind is
-      Raw : constant String := Ada.Characters.Handling.To_Lower (To_String (Cfg.Audio_Backend));
+      Raw : constant String :=
+        Ada.Characters.Handling.To_Lower
+          (Ada.Strings.Unbounded.To_String (Cfg.Audio_Backend));
    begin
       if Raw = "null" then
          return Null_Backend;
       elsif Raw = "bell" then
          return Bell_Backend;
       elsif Raw = "coreaudio" or else Raw = "native" or else Raw = "afplay" or else Raw = "miniaudio" then
-         return Alsa_Backend;
+         return Native_Backend;
       else
          return Bell_Backend;
       end if;
    end Backend_From_Config;
-
-   function Effective_Duration_Ms (Event : Sound_Event) return Positive
-     renames Beep.Audio.Shared.Effective_Duration_Ms;
-
-   function Motif_Frequency (Motif : Motif_Type) return Float
-     renames Beep.Audio.Shared.Motif_Frequency;
-
-   function Is_Ambient_Motif (Motif : Motif_Type) return Boolean
-     renames Beep.Audio.Shared.Is_Ambient_Motif;
-
-   function Mid_Blend_For_Motif
-     (Motif     : Motif_Type;
-      Timestamp : Milliseconds;
-      Mid_Min   : Float;
-      Mid_Max   : Float) return Float
-     renames Beep.Audio.Shared.Mid_Blend_For_Motif;
-
-   G_Ambient_Phase : Float := 0.0;
-   Mix : Beep.Audio.Runtime.Mix_Params;
 
    procedure Emit_Bell (Gain : Float) is
       use Ada.Text_IO;
@@ -71,201 +51,134 @@ package body Beep.Audio is
       Flush;
    end Emit_Bell;
 
-   procedure Emit_Stream
-     (Engine : in out Audio_Engine;
-      Event  : Sound_Event;
-      Gain   : Float;
-      Ambient_Freq : Float := 0.0;
-      Ambient_Gain : Float := 0.0;
-      Mid_Min      : Float := 0.16;
-      Mid_Max      : Float := 0.52;
-      Fore_Attn    : Float := 0.55)
-   is
-      Duration_Ms : constant Positive := Effective_Duration_Ms (Event);
-      Frames      : constant Positive := Positive (Integer (Engine.Sample_Rate) * Duration_Ms / 1000);
-      Frequency   : constant Float := Motif_Frequency (Event.Motif);
-      type Sample_Buffer is array (Positive range <>) of aliased Interfaces.C.C_float;
-      Buffer      : Sample_Buffer (1 .. Frames);
-      Two_Pi      : constant Float := 2.0 * Ada.Numerics.Pi;
-      Rate_F      : constant Float := Float (Engine.Sample_Rate);
-      Rc          : int;
-      Ambient_Phase_Step : constant Float := Two_Pi * Ambient_Freq / Rate_F;
-      Mid_Blend   : constant Float := Mid_Blend_For_Motif (Event.Motif, Event.Timestamp, Mid_Min, Mid_Max);
-      Fore_Blend  : constant Float := 1.0 - Mid_Blend * Fore_Attn;
-   begin
-      for I in Buffer'Range loop
-         declare
-            T          : constant Float := Float (I - 1) / Rate_F;
-            Phase      : constant Float := Two_Pi * Frequency * T;
-            Mid_Phase  : constant Float := Two_Pi * (Frequency * 0.62) * T;
-            N          : constant Float := Float (I - 1) / Float (Buffer'Length);
-            Envelope   : Float := 1.0;
-            Fore_S     : Float;
-            Mid_S      : Float;
-            Sample_F32 : Float;
-            Ambient_S  : Float := 0.0;
-         begin
-            if N < 0.08 then
-               Envelope := N / 0.08;
-            elsif N > 0.88 then
-               Envelope := (1.0 - N) / 0.12;
-            end if;
-            if Envelope < 0.0 then
-               Envelope := 0.0;
-            end if;
-
-            if Ambient_Gain > 0.0 then
-               Ambient_S := Ada.Numerics.Elementary_Functions.Sin (G_Ambient_Phase) * Ambient_Gain;
-               G_Ambient_Phase := G_Ambient_Phase + Ambient_Phase_Step;
-               if G_Ambient_Phase > Two_Pi then
-                  G_Ambient_Phase := G_Ambient_Phase - Two_Pi;
-               end if;
-            end if;
-
-            Fore_S := Ada.Numerics.Elementary_Functions.Sin (Phase) * Clamp01 (Gain) * Envelope * Fore_Blend;
-            Mid_S := Ada.Numerics.Elementary_Functions.Sin (Mid_Phase) * Clamp01 (Gain) * Envelope * Mid_Blend;
-            Sample_F32 := Fore_S + Mid_S;
-            Sample_F32 := Sample_F32 + Ambient_S;
-            if Sample_F32 > 1.0 then
-               Sample_F32 := 1.0;
-            elsif Sample_F32 < -1.0 then
-               Sample_F32 := -1.0;
-            end if;
-            Buffer (I) := Interfaces.C.C_float (Sample_F32);
-         end;
-      end loop;
-
-      Rc := beep_audio_stream_write (Buffer'Address, unsigned (Buffer'Length));
-      pragma Unreferenced (Rc);
-   end Emit_Stream;
-
-   procedure Emit_Ambient_Chunk
-     (Engine : in out Audio_Engine;
-      Ambient_Freq : Float;
-      Ambient_Gain : Float)
-   is
-      Duration_Ms : constant Positive := 44;
-      Frames      : constant Positive := Positive (Integer (Engine.Sample_Rate) * Duration_Ms / 1000);
-      type Sample_Buffer is array (Positive range <>) of aliased Interfaces.C.C_float;
-      Buffer      : Sample_Buffer (1 .. Frames);
-      Two_Pi      : constant Float := 2.0 * Ada.Numerics.Pi;
-      Rate_F      : constant Float := Float (Engine.Sample_Rate);
-      Phase_Step  : constant Float := Two_Pi * Ambient_Freq / Rate_F;
-      Rc          : int;
-   begin
-      for I in Buffer'Range loop
-         declare
-            S : Float := Ada.Numerics.Elementary_Functions.Sin (G_Ambient_Phase) * Ambient_Gain;
-         begin
-            G_Ambient_Phase := G_Ambient_Phase + Phase_Step;
-            if G_Ambient_Phase > Two_Pi then
-               G_Ambient_Phase := G_Ambient_Phase - Two_Pi;
-            end if;
-
-            if S > 1.0 then
-               S := 1.0;
-            elsif S < -1.0 then
-               S := -1.0;
-            end if;
-            Buffer (I) := Interfaces.C.C_float (S);
-         end;
-      end loop;
-
-      Rc := beep_audio_stream_write (Buffer'Address, unsigned (Buffer'Length));
-      pragma Unreferenced (Rc);
-   end Emit_Ambient_Chunk;
-
    Queue : Beep.Audio.Runtime.Event_Queue;
-   Ambient : Beep.Audio.Runtime.Ambient_Control;
+   Mix   : Beep.Audio.Runtime.Mix_Params;
+   Ctrl  : Beep.Audio.Runtime.Player_Control;
 
    G_Backend     : Backend_Kind := Null_Backend;
    G_Sample_Rate : unsigned := 44_100;
    G_Active      : Boolean := False;
 
+   M : Beep.Audio.Mixer.Mixer_State;
+
+   --  One player task per process (terminal on stop).  The task drains the
+   --  event queue, mixes, and pushes 512-frame chunks to the C bridge, which
+   --  blocks on a bounded condvar wait when the ring is full and returns 0 on
+   --  shutdown.  Termination is signalled exclusively by Ctrl.Stop_Requested;
+   --  the C bridge's own shutdown flag handles the writer path.
    task type Audio_Player;
 
    task body Audio_Player is
-      Item   : Queued_Event;
-      Shadow : Audio_Engine;
-      Ambient_Freq : Float := 0.0;
-      Ambient_Gain : Float := 0.0;
-      Ambient_Drive : Float := 0.32;
-      Ambient_Max   : Float := 0.30;
-      Ambient_Decay : Float := 0.992;
-      Mid_Min       : Float := 0.16;
-      Mid_Max       : Float := 0.52;
-      Fore_Attn     : Float := 0.55;
+      Item      : Queued_Event;
+      Available : Boolean;
+      Params    : Beep.Audio.Mixer.Mix_Parameters;
+      F32       : Beep.Audio.Mixer.Sample_Buffer (1 .. 512);
    begin
+      Ctrl.Mark_Started;
       loop
-         select
-            Queue.Pop (Item);
-            if not Item.Has_Value then
-               --  Stop requests are terminal for this background task.
-               if Queue.Is_Stopped then
-                  exit;
-               end if;
-            elsif G_Active then
-               case G_Backend is
-                  when Null_Backend =>
-                     null;
-                  when Bell_Backend =>
-                     Emit_Bell (Item.Event.Gain);
-                  when Alsa_Backend =>
-                     Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
-                     Ambient.Snapshot (Ambient_Freq, Ambient_Gain, Ambient_Decay);
-                     Shadow :=
-                       (Backend => G_Backend,
-                        Alsa_Handle => System.Null_Address,
-                        Sample_Rate => G_Sample_Rate,
-                        Active => G_Active);
-                     Emit_Stream (Shadow, Item.Event, Item.Event.Gain, Ambient_Freq, Ambient_Gain, Mid_Min, Mid_Max, Fore_Attn);
-               end case;
+         --  Drain every queued event this tick.  The queue is bounded, so
+         --  this loop terminates.  Shutdown may race here; that is fine,
+         --  because the C bridge's shutdown flag (set by Shutdown before
+         --  Wait_Stopped) makes any in-flight write return 0 and the loop
+         --  exits via Ctrl.Stop_Requested below.
+         while G_Active loop
+            Queue.Try_Pop (Item, Available);
+            exit when not Available;
+            if G_Backend = Bell_Backend then
+               Emit_Bell (Item.Event.Gain);
+            else
+               Mix.Get
+                 (Params.Ambient_Drive,
+                  Params.Ambient_Max,
+                  Params.Ambient_Decay,
+                  Params.Mid_Min,
+                  Params.Mid_Max,
+                  Params.Fore_Attn);
+               Beep.Audio.Mixer.Add_Event (M, Item.Event, Params);
             end if;
+         end loop;
 
-         or
-            delay 0.05;
-            if G_Active and then G_Backend = Alsa_Backend then
-               Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
-               Ambient.Snapshot (Ambient_Freq, Ambient_Gain, Ambient_Decay);
-               if Ambient_Gain > 0.003 then
-                  Shadow :=
-                    (Backend => G_Backend,
-                     Alsa_Handle => System.Null_Address,
-                     Sample_Rate => G_Sample_Rate,
-                     Active => G_Active);
-                  Emit_Ambient_Chunk (Shadow, Ambient_Freq, Ambient_Gain);
-               end if;
+         --  Render while the mixer has audible state (active voices or a
+         --  decaying ambient bed), not only on ticks with new events: voices
+         --  and ambient both decay across chunks and must keep advancing.
+         --  When idle the chunk is silence, so skipping saves work and keeps
+         --  the ring from filling with zero frames.
+         if G_Active and then G_Backend /= Bell_Backend and then Beep.Audio.Mixer.Is_Busy (M) then
+            Mix.Get
+              (Params.Ambient_Drive,
+               Params.Ambient_Max,
+               Params.Ambient_Decay,
+               Params.Mid_Min,
+               Params.Mid_Max,
+               Params.Fore_Attn);
+            Beep.Audio.Mixer.Render_Chunk (M, F32, Params);
+            if G_Backend = Native_Backend then
+               --  The C bridge blocks on a bounded condvar wait until the
+               --  ring has room, so this provides natural pacing when the
+               --  consumer is slower than the producer.  A 0 return means
+               --  the chunk was dropped under backpressure or the stream
+               --  is shutting down; either way the next iteration retries
+               --  and a real shutdown is observed via Ctrl.Stop_Requested.
+               declare
+                  Rc : constant int := beep_audio_stream_write (F32'Address, 512);
+               begin
+                  pragma Unreferenced (Rc);
+               end;
             end if;
-         end select;
+         end if;
+
+         if Ctrl.Stop_Requested then
+            exit;
+         end if;
+
+         --  Pacing: 512 frames at 44.1 kHz is ~11.6 ms of audio.  Delay a
+         --  little less than that so the writer stays ahead of the
+         --  consumer without busy-spinning.  The C bridge's backpressure
+         --  (bounded condvar wait) handles the slow-consumer case.
+         delay 0.01;
       end loop;
+      Ctrl.Mark_Stopped;
+   exception
+      when E : others =>
+         --  A task that dies without calling Mark_Stopped leaves Shutdown
+         --  parked forever in Wait_Stopped.  Always acknowledge termination,
+         --  and surface the exception so it is no longer silent.
+         Ada.Text_IO.Put_Line
+           ("[fatal] audio player task crashed: "
+            & Ada.Exceptions.Exception_Information (E));
+         Ctrl.Mark_Stopped;
    end Audio_Player;
 
    Player : Audio_Player;
 
    procedure Initialize (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config) is
       Requested : constant Backend_Kind := Backend_From_Config (Cfg);
-      Raw       : constant String := Ada.Characters.Handling.To_Lower (To_String (Cfg.Audio_Backend));
+      Raw       : constant String :=
+        Ada.Characters.Handling.To_Lower
+          (Ada.Strings.Unbounded.To_String (Cfg.Audio_Backend));
       Rc        : int := 0;
    begin
-      Engine := (others => <>);
-      Engine.Backend := Requested;
-      Queue.Start;
-      Mix.Set (Cfg.Audio_Mix);
-      G_Backend := Requested;
-      G_Sample_Rate := Engine.Sample_Rate;
-      G_Active := False;
-      G_Ambient_Phase := 0.0;
-      Ambient.Reset;
-
-      if Requested = Null_Backend then
-         Engine.Active := True;
-         G_Active := True;
+      --  Post-shutdown reinitialization is not supported: the player task
+      --  is terminal, so we cannot restart playback.
+      if Ctrl.Stopped then
+         Engine := (others => <>);
+         Engine.Backend := Requested;
+         Ada.Text_IO.Put_Line
+           ("[warn] Initialize after Shutdown is a no-op; playback unavailable");
          return;
       end if;
 
-      if Requested = Bell_Backend then
+      Engine := (others => <>);
+      Engine.Backend := Requested;
+      G_Backend := Requested;
+      G_Sample_Rate := Engine.Sample_Rate;
+      G_Active := True;
+      Beep.Audio.Mixer.Reset (M);
+      Mix.Set (Cfg.Audio_Mix);
+      Queue.Start;
+
+      if Requested = Null_Backend or else Requested = Bell_Backend then
          Engine.Active := True;
-         G_Active := True;
          return;
       end if;
 
@@ -274,17 +187,15 @@ package body Beep.Audio is
          Engine.Backend := Bell_Backend;
          Engine.Active := True;
          G_Backend := Bell_Backend;
-         G_Active := True;
          Ada.Text_IO.Put_Line ("[warn] Darwin audio stream unavailable; falling back to terminal bell backend");
          if Raw /= "bell" then
-            Ada.Text_IO.Put_Line ("[warn] requested backend '" & Raw & "' could not be started") ;
+            Ada.Text_IO.Put_Line ("[warn] requested backend '" & Raw & "' could not be started");
          end if;
          return;
       end if;
 
       Engine.Active := True;
       G_Backend := Engine.Backend;
-      G_Active := True;
    end Initialize;
 
    procedure Reconfigure (Engine : in out Audio_Engine; Cfg : Beep.Config.App_Config) is
@@ -301,36 +212,28 @@ package body Beep.Audio is
       Event  : Beep.Core.Types.Sound_Event)
    is
       Q : Sound_Event := Event;
-      Ambient_Drive : Float := 0.32;
-      Ambient_Max   : Float := 0.30;
-      Ambient_Decay : Float := 0.992;
-      Mid_Min       : Float := 0.16;
-      Mid_Max       : Float := 0.52;
-      Fore_Attn     : Float := 0.55;
    begin
       if not Engine.Active then
          return;
       end if;
 
-      Mix.Set (Cfg.Audio_Mix);
-      Q.Gain := Clamp01 (Event.Gain * Cfg.Master_Volume);
-      if Is_Ambient_Motif (Q.Motif) then
-         Mix.Get (Ambient_Drive, Ambient_Max, Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
-         pragma Unreferenced (Ambient_Decay, Mid_Min, Mid_Max, Fore_Attn);
-         Ambient.Drive (Q.Motif, Q.Gain, Ambient_Drive, Ambient_Max);
-      end if;
+      Q.Gain := Shared.Clamp01 (Event.Gain * Cfg.Master_Volume);
       Queue.Push (Q);
    end Emit;
 
    procedure Shutdown (Engine : in out Audio_Engine) is
    begin
-      G_Active := False;
       Queue.Stop;
+      Ctrl.Request_Stop;
+      --  Signal the C bridge first: a writer blocked in
+      --  beep_audio_stream_write wakes, sees the inactive flag, and returns
+      --  0 so the player can exit.  This must happen before Wait_Stopped.
       beep_audio_stream_shutdown;
+      Ctrl.Wait_Stopped;
 
+      G_Active := False;
       G_Backend := Null_Backend;
-      G_Ambient_Phase := 0.0;
-      Ambient.Reset;
+      Beep.Audio.Mixer.Reset (M);
 
       Engine := (others => <>);
    end Shutdown;
@@ -339,7 +242,7 @@ package body Beep.Audio is
    begin
       case Engine.Backend is
          when Null_Backend => return "null";
-         when Alsa_Backend => return "coreaudio";
+         when Native_Backend => return "coreaudio";
          when Bell_Backend => return "bell";
       end case;
    end Backend_Name;

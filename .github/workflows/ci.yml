@@ -64,6 +64,7 @@ jobs:
           set -euo pipefail
           ./obj/beep_core_tests
           ./obj/beep_config_tests
+          ./obj/beep_audio_tests
 
       - name: Run SPARK proof
         shell: bash
@@ -71,8 +72,8 @@ jobs:
           set -euo pipefail
           ./scripts/prove.sh
 
-  darwin-compile:
-    name: macOS Darwin Compile
+  darwin-validate:
+    name: macOS Build/Test
     runs-on: macos-15
 
     steps:
@@ -98,9 +99,18 @@ jobs:
           set -euo pipefail
           alr --version
 
-      - name: Darwin compile check
+      - name: Build (darwin)
         shell: bash
         run: |
           set -euo pipefail
           BEEP_OS=darwin alr -n update
-          BEEP_OS=darwin alr -n exec -- gprbuild -c -p -P beep.gpr -XBEEP_OS=darwin
+          BEEP_OS=darwin alr -n build
+          test -x ./obj/beep
+
+      - name: Run tests (darwin)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./obj/beep_core_tests
+          ./obj/beep_config_tests
+          ./obj/beep_audio_tests

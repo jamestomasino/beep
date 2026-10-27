@@ -3,6 +3,12 @@ obj/
 bin/
 lib/
 
+# Ada compiler intermediate artifacts (listing files, object files)
+*.ali
+*.o
+*.b
+*.s
+
 # Alire workspace state
 alire/
 .alire/

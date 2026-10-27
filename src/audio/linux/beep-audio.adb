@@ -1,4 +1,5 @@
 with Ada.Characters.Handling;
+with Ada.Exceptions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Beep.Audio.Mixer;
@@ -20,8 +21,10 @@ package body Beep.Audio is
    Snd_Pcm_Access_Rw_Interleaved : constant int := 3;
    Snd_Pcm_Format_S16_Le        : constant int := 2;
    Snd_Pcm_Mode_Non_Blocking    : constant int := 1;
-   E_Again                      : constant int := 11;
-   Poll_Err                     : constant short := 8;
+   --  ALSA returns negative errno values on error: -EAGAIN (-11), -EPIPE (-32).
+   E_Again                      : constant int := -11;
+   Poll_In                      : constant short := 1;   -- POLLIN
+   Poll_Err                     : constant short := 8;   -- POLLERR
 
    subtype Queued_Event is Beep.Audio.Runtime.Queued_Event;
 
@@ -94,7 +97,7 @@ package body Beep.Audio is
       elsif Raw = "bell" then
          return Bell_Backend;
       else
-         return Alsa_Backend;
+         return Native_Backend;
       end if;
    end Backend_From_Config;
 
@@ -113,7 +116,7 @@ package body Beep.Audio is
    Ctrl  : Beep.Audio.Runtime.Player_Control;
 
    G_Backend     : Backend_Kind := Null_Backend;
-   G_Alsa_Handle : System.Address := System.Null_Address;
+   G_Native_Handle : System.Address := System.Null_Address;
    G_Sample_Rate : unsigned := 44_100;
    G_Active      : Boolean := False;
 
@@ -170,6 +173,13 @@ package body Beep.Audio is
             if N > 0 then
                N := snd_pcm_poll_descriptors (Handle, Poll_Fds'Access, 1);
                if N > 0 then
+                  --  POLLIN: block until the device can accept data (or an
+                  --  error condition), so poll() returns as soon as it is
+                  --  ready instead of always waiting out the full 20 ms
+                  --  timeout.  Without this set, each EAGAIN retry just
+                  --  sleeps the whole timeout, adding ~20 ms of latency
+                  --  per chunk and never waking early on readiness.
+                  Poll_Fds.Events := Poll_In;
                   R := poll (Poll_Fds'Access, 1, 20);
                   if R > 0 then
                      declare
@@ -180,7 +190,7 @@ package body Beep.Audio is
                            --  Fatal device error: recover, then retry.
                            if snd_pcm_recover (Handle, -1, 1) < 0 then
                               G_Backend := Bell_Backend;
-                              G_Alsa_Handle := System.Null_Address;
+                              G_Native_Handle := System.Null_Address;
                               Ada.Text_IO.Put_Line
                                 ("[warn] ALSA device error; falling back to bell");
                               return;
@@ -197,7 +207,7 @@ package body Beep.Audio is
                Written := 0;  --  retry the full chunk
             else
                G_Backend := Bell_Backend;
-               G_Alsa_Handle := System.Null_Address;
+               G_Native_Handle := System.Null_Address;
                Ada.Text_IO.Put_Line
                  ("[warn] ALSA unrecoverable; falling back to bell");
                return;
@@ -213,21 +223,17 @@ package body Beep.Audio is
       Available : Boolean;
       Params    : Beep.Audio.Mixer.Mix_Parameters;
       F32       : Beep.Audio.Mixer.Sample_Buffer (1 .. 512);
-      Bell_Rang : Boolean := False;
    begin
       Ctrl.Mark_Started;
       loop
-         Bell_Rang := False;
-
          --  Drain every queued event this tick (bounded by the queue).
-         while G_Active loop
+         loop
             Queue.Try_Pop (Item, Available);
             exit when not Available;
             if G_Backend = Bell_Backend then
                --  Bell backend: ring per drained event (existing
                --  gain-based double-bell behavior).
                Emit_Bell (Item.Event.Gain);
-               Bell_Rang := True;
             else
                Mix.Get
                  (Params.Ambient_Drive,
@@ -240,43 +246,50 @@ package body Beep.Audio is
             end if;
          end loop;
 
-         if G_Active and then not Bell_Rang then
-            case G_Backend is
-               when Null_Backend =>
-                  null;  --  events drained and discarded
-               when Bell_Backend =>
-                  null;  --  already handled in the drain loop
-               when Alsa_Backend =>
-                  if G_Alsa_Handle /= System.Null_Address then
-                     Mix.Get
-                       (Params.Ambient_Drive,
-                        Params.Ambient_Max,
-                        Params.Ambient_Decay,
-                        Params.Mid_Min,
-                        Params.Mid_Max,
-                        Params.Fore_Attn);
-                     Beep.Audio.Mixer.Render_Chunk (M, F32, Params);
-                     Emit_Alsa_Chunk (G_Alsa_Handle, F32);
-                  else
-                     --  ALSA handle null: behave like bell backend.
-                     G_Backend := Bell_Backend;
-                  end if;
-            end case;
+         --  Render while the mixer has audible state (active voices or a
+         --  decaying ambient bed), not only on ticks with new events: voices
+         --  and ambient both decay across chunks and must keep advancing.
+         --  When idle the chunk is silence, so skipping saves work.
+         if G_Active and then Beep.Audio.Mixer.Is_Busy (M) then
+            if G_Backend = Native_Backend and then G_Native_Handle /= System.Null_Address then
+               Mix.Get
+                 (Params.Ambient_Drive,
+                  Params.Ambient_Max,
+                  Params.Ambient_Decay,
+                  Params.Mid_Min,
+                  Params.Mid_Max,
+                  Params.Fore_Attn);
+               Beep.Audio.Mixer.Render_Chunk (M, F32, Params);
+               --  The ALSA poll inside Emit_Alsa_Chunk paces the write.
+               Emit_Alsa_Chunk (G_Native_Handle, F32);
+            elsif G_Backend = Native_Backend then
+               --  ALSA handle null: behave like bell backend.
+               G_Backend := Bell_Backend;
+            else
+               --  Null or bell backend: no device output; the mixer state
+               --  is irrelevant for the fallback, so just pace.
+               delay 0.01;
+            end if;
+         else
+            --  No audible state this tick: pace with a short delay to avoid
+            --  a busy loop.
+            delay 0.01;
          end if;
 
          if Ctrl.Stop_Requested then
             exit;
          end if;
-
-         --  Pacing: ALSA poll provides natural pacing; null/bell need a
-         --  short delay to avoid a busy loop.
-         if G_Backend = Alsa_Backend and then G_Alsa_Handle /= System.Null_Address then
-            null;  --  poll inside Emit_Alsa_Chunk already paced
-         else
-            delay 0.01;
-         end if;
       end loop;
       Ctrl.Mark_Stopped;
+   exception
+      when E : others =>
+         --  A task that dies without calling Mark_Stopped leaves Shutdown
+         --  parked forever in Wait_Stopped.  Always acknowledge termination,
+         --  and surface the exception so it is no longer silent.
+         Ada.Text_IO.Put_Line
+           ("[fatal] audio player task crashed: "
+            & Ada.Exceptions.Exception_Information (E));
+         Ctrl.Mark_Stopped;
    end Audio_Player;
 
    Player : Audio_Player;
@@ -300,7 +313,7 @@ package body Beep.Audio is
       Engine := (others => <>);
       Engine.Backend := Requested;
       G_Backend := Requested;
-      G_Alsa_Handle := System.Null_Address;
+      G_Native_Handle := System.Null_Address;
       G_Sample_Rate := Engine.Sample_Rate;
       G_Active := False;
       Beep.Audio.Mixer.Reset (M);
@@ -331,10 +344,10 @@ package body Beep.Audio is
          return;
       end if;
 
-      Engine.Alsa_Handle := Device;
+      Engine.Native_Handle := Device;
       Err :=
         snd_pcm_set_params
-          (Engine.Alsa_Handle,
+          (Engine.Native_Handle,
            Snd_Pcm_Format_S16_Le,
            Snd_Pcm_Access_Rw_Interleaved,
            1,
@@ -343,15 +356,15 @@ package body Beep.Audio is
            50_000);
       if Err < 0 then
          declare
-            Ignore : constant int := snd_pcm_close (Engine.Alsa_Handle);
+            Ignore : constant int := snd_pcm_close (Engine.Native_Handle);
          begin
             pragma Unreferenced (Ignore);
          end;
-         Engine.Alsa_Handle := System.Null_Address;
+         Engine.Native_Handle := System.Null_Address;
          Engine.Backend := Bell_Backend;
          Engine.Active := True;
          G_Backend := Bell_Backend;
-         G_Alsa_Handle := System.Null_Address;
+         G_Native_Handle := System.Null_Address;
          G_Active := True;
          Ada.Text_IO.Put_Line ("[warn] ALSA config failed; falling back to terminal bell backend");
          return;
@@ -360,19 +373,19 @@ package body Beep.Audio is
       --  Non-blocking mode: writes return EAGAIN instead of blocking,
       --  so the player can observe Stop_Requested within one poll timeout.
       declare
-         Nb : constant int := snd_pcm_nonblock (Engine.Alsa_Handle, Snd_Pcm_Mode_Non_Blocking);
+         Nb : constant int := snd_pcm_nonblock (Engine.Native_Handle, Snd_Pcm_Mode_Non_Blocking);
       begin
          if Nb < 0 then
             declare
-               Ignore : constant int := snd_pcm_close (Engine.Alsa_Handle);
+               Ignore : constant int := snd_pcm_close (Engine.Native_Handle);
             begin
                pragma Unreferenced (Ignore);
             end;
-            Engine.Alsa_Handle := System.Null_Address;
+            Engine.Native_Handle := System.Null_Address;
             Engine.Backend := Bell_Backend;
             Engine.Active := True;
             G_Backend := Bell_Backend;
-            G_Alsa_Handle := System.Null_Address;
+            G_Native_Handle := System.Null_Address;
             G_Active := True;
             Ada.Text_IO.Put_Line ("[warn] ALSA non-block failed; falling back to bell");
             return;
@@ -381,7 +394,7 @@ package body Beep.Audio is
 
       Engine.Active := True;
       G_Backend := Engine.Backend;
-      G_Alsa_Handle := Engine.Alsa_Handle;
+      G_Native_Handle := Engine.Native_Handle;
       G_Active := True;
    end Initialize;
 
@@ -416,13 +429,13 @@ package body Beep.Audio is
       Ctrl.Request_Stop;
       Ctrl.Wait_Stopped;
 
-      if Engine.Alsa_Handle /= System.Null_Address then
-         Ignore := snd_pcm_close (Engine.Alsa_Handle);
+      if Engine.Native_Handle /= System.Null_Address then
+         Ignore := snd_pcm_close (Engine.Native_Handle);
          pragma Unreferenced (Ignore);
       end if;
 
       G_Backend := Null_Backend;
-      G_Alsa_Handle := System.Null_Address;
+      G_Native_Handle := System.Null_Address;
       Beep.Audio.Mixer.Reset (M);
 
       Engine := (others => <>);
@@ -432,7 +445,7 @@ package body Beep.Audio is
    begin
       case Engine.Backend is
          when Null_Backend => return "null";
-         when Alsa_Backend => return "alsa";
+         when Native_Backend => return "alsa";
          when Bell_Backend => return "bell";
       end case;
    end Backend_Name;
