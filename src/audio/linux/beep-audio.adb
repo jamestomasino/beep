@@ -148,12 +148,12 @@ package body Beep.Audio is
             exit;
          end if;
 
-         N := snd_pcm_writei
+         N := int (snd_pcm_writei
            (Handle,
-            System.Address (Buffer'Address + Integer (Written) * 2),
-            Remaining);
+            Buffer (Positive (Written) + 1)'Address,
+            Remaining));
          if N >= 0 then
-            Written := Written + N;
+            Written := Written + long (N);
             Eagain_Retries := 0;
             exit when Written = long (Buffer'Length);
          end if;
@@ -175,7 +175,8 @@ package body Beep.Audio is
                      declare
                         Revents : constant short := Poll_Fds.Revents;
                      begin
-                        if (Revents and Poll_Err) /= 0 then
+                        if (Interfaces.Unsigned_32 (Revents)
+                            and Interfaces.Unsigned_32 (Poll_Err)) /= 0 then
                            --  Fatal device error: recover, then retry.
                            if snd_pcm_recover (Handle, -1, 1) < 0 then
                               G_Backend := Bell_Backend;

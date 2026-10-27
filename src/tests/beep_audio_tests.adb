@@ -1,6 +1,7 @@
 with Ada.Exceptions;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
+with Beep.Audio;
 with Beep.Audio.Mixer;
 with Beep.Audio.Shared;
 with Beep.Core.Types;
@@ -326,8 +327,8 @@ procedure Beep_Audio_Tests is
       end;
    end Test_Ambient_Decay_Time_Based;
 
-   --  Ambient level after multiple events is the sum of individual drives
-   --  (not N times the single-event level).
+   --  The ambient bed is a single capped level, not a per-event sum. Its
+   --  target is monotonic in event gain and saturates at Ambient_Max.
    procedure Test_Ambient_Accumulation is
       M1 : Mixer_State;
       M2 : Mixer_State;
@@ -337,27 +338,36 @@ procedure Beep_Audio_Tests is
       Reset (M1);
       Reset (M2);
       Reset (M3);
-      --  M1: one event, gain 0.5
       Add_Event (M1, Make_Event (Drone, Gain => 0.5), Params);
-      --  M3: two events, each gain 0.5 (should be ~2x M1's level, unless saturated)
-      Add_Event (M3, Make_Event (Drone, Gain => 0.5), Params);
-      Add_Event (M3, Make_Event (Bip,   Gain => 0.5), Params);
-      --  M2: one event, gain 1.0 (should be between M1 and M3)
       Add_Event (M2, Make_Event (Drone, Gain => 1.0), Params);
+      Add_Event (M3, Make_Event (Drone, Gain => 1.5), Params);
 
-      --  drive(M1) = 0.32 + 0.5*0.55 = 0.595; level = 0.595*0.30 = 0.1785
-      --  drive(M2) = 0.32 + 1.0*0.55 = 0.87;  level = 0.87*0.30 = 0.261
-      --  drive(M3) = 0.32 + 0.5*0.55 + 0.32 + 0.5*0.55 = 1.19; level = min(1.19*0.30, 0.30) = 0.30 (saturated)
+      --  drive(M1) = 0.32 + 0.5*0.55  = 0.595; level = 0.595*0.30 = 0.1785
+      --  drive(M2) = 0.32 + 1.0*0.55  = 0.870; level = 0.870*0.30 = 0.261
+      --  drive(M3) = 0.32 + 1.5*0.55  = 1.145; level = 1.145*0.30 -> capped 0.30
 
       Expect (M1.Ambient.Level < M2.Ambient.Level,
               "higher gain should give higher ambient level");
       Expect (M2.Ambient.Level < M3.Ambient.Level,
-              "more events should give higher ambient level");
-      Expect (M3.Ambient.Level <= Params.Ambient_Max + 1.0e-6,
+              "higher gain should give higher ambient level");
+      Expect (abs (M3.Ambient.Level - Params.Ambient_Max) < 1.0e-6,
               "ambient should saturate at Ambient_Max");
    end Test_Ambient_Accumulation;
 
 begin
+   --  The platform body (pulled in via the child packages above) declares a
+   --  global Audio_Player task that auto-starts and only exits on Shutdown.
+   --  The mixer tests below use their own local Mixer_State values and never
+   --  touch that task, so stop it immediately: this lets the process
+   --  terminate cleanly on both the success and the failure path.
+   --  Shutdown on a fresh engine is safe: no device is open to close, and
+   --  Wait_Stopped returns within one pacing step (~10 ms).
+   declare
+      Engine : Beep.Audio.Audio_Engine;
+   begin
+      Beep.Audio.Shutdown (Engine);
+   end;
+
    Test_Empty_Mixer_Silence;
    Test_Single_Voice_Nonzero;
    Test_Two_Voices_Overlap;

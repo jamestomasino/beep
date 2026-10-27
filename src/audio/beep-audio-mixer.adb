@@ -100,7 +100,7 @@ package body Beep.Audio.Mixer is
       --  per motif, level = drive * Ambient_Max, capped at Ambient_Max.
       if Shared.Is_Ambient_Motif (Event.Motif) then
          declare
-            Driven : Float := Params.Ambient_Drive + Gain * Params.Fore_Attn;
+            Driven : Float := Params.Ambient_Drive + Event.Gain * Params.Fore_Attn;
          begin
             case Event.Motif is
                when Drone =>
